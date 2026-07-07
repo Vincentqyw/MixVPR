@@ -117,6 +117,92 @@ model.load_state_dict(state_dict)
 model.eval()
 ```
 
+## Model Export & Quantization
+
+Pre-built ONNX and CoreML models with FP16 / INT8 quantization are provided.
+
+### Setup
+
+```bash
+uv venv --python 3.10
+uv pip install torch torchvision onnx onnxruntime onnxconverter-common coremltools Pillow numpy tqdm
+```
+
+### Available Models
+
+| Format | Path | Size | Latency (M-series) | CosSim | Status |
+|---|---|---|---|---|---|
+| ONNX | `onnx_models/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | ✓ |
+| ONNX | `onnx_models/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | ✓ Recommended |
+| CoreML | `coreml_models/mixvpr_fp16.mlpackage` | 20.8 MB | **3.1 ms** | 0.9999 | ✓ Recommended |
+| CoreML | `coreml_models/mixvpr_int8.mlpackage` | 10.5 MB | **3.3 ms** | 0.9983 | ✓ |
+
+> **Note:** Images must be resized to 320×320. The model produces a 4096-dim L2-normalized global descriptor.
+
+### Inference
+
+**ONNX:**
+
+```python
+import onnxruntime as ort
+import numpy as np
+from PIL import Image
+import torchvision.transforms as tvf
+
+sess = ort.InferenceSession("onnx_models/mixvpr_fp16.onnx",
+                            providers=['CPUExecutionProvider'])
+
+preprocess = tvf.Compose([
+    tvf.Resize((320, 320), interpolation=tvf.InterpolationMode.BICUBIC),
+    tvf.ToTensor(),
+    tvf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+img = preprocess(Image.open("image.jpg").convert("RGB")).unsqueeze(0).numpy()
+
+descriptor = sess.run(None, {'images': img.astype(np.float32)})[0]
+# shape: (1, 4096), L2-normalized
+```
+
+**CoreML (Apple Silicon):**
+
+```python
+import coremltools as ct
+import numpy as np
+from PIL import Image
+import torchvision.transforms as tvf
+
+mlmodel = ct.models.MLModel("coreml_models/mixvpr_fp16.mlpackage")
+
+preprocess = tvf.Compose([
+    tvf.Resize((320, 320), interpolation=tvf.InterpolationMode.BICUBIC),
+    tvf.ToTensor(),
+    tvf.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+])
+img = preprocess(Image.open("image.jpg").convert("RGB")).unsqueeze(0).numpy()
+
+descriptor = mlmodel.predict({'images': img.astype(np.float32)})['descriptor']
+# Runs on ANE + GPU automatically (~15× faster than ONNX CPU)
+```
+
+### Re-export
+
+```bash
+# ONNX export + quantization (FP16, INT8, INT4)
+uv run python export_quant_onnx.py
+
+# CoreML export + quantization (FP16, INT8)
+uv run python export_coreml.py
+```
+
+Calibration images are read from `/Volumes/SSD-Realcat/datasets/raco` (roxford5k + rparis6k + revisitop1m). Update the `calib_base` variable in the scripts to point to your own dataset.
+
+### Accuracy Notes
+
+- **ONNX FP16**: CosSim > 0.9999 — retrieval results identical to PyTorch.
+- **CoreML FP16**: CosSim > 0.9999 — latency ~3 ms (ANE ~15× speedup).
+- **CoreML INT8**: CosSim 0.9983 — latency ~3 ms, only 10.5 MB. Negligible retrieval impact.
+- **ONNX INT8/INT4**: Quantized models are generated but the ONNX Runtime CPU EP lacks `ConvInteger` kernels for this architecture. Use GPU EP (CUDA/TensorRT) or switch to CoreML for quantized inference.
+
 ## Bibtex
 
 ```

@@ -1,3 +1,13 @@
 __pycache__
 .ipynb_checkpoints
 LOGS
+
+# Exported models (too large for git — use GitHub Releases or HuggingFace)
+onnx_models/
+coreml_models/
+
+# Test / calibration images
+data/
+
+# Virtual environment
+.venv/
