@@ -119,7 +119,33 @@ model.eval()
 
 ## Model Export & Quantization
 
-Pre-built ONNX and CoreML models with FP16 / INT8 quantization are provided.
+Pre-built ONNX and CoreML models with FP16 / INT8 quantization are hosted on
+[Hugging Face](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr).
+
+### Download
+
+```bash
+# Install huggingface_hub
+pip install huggingface_hub
+
+# Download all MixVPR models
+huggingface-cli download Realcat/image_retrieval_checkpoints mixvpr/ --local-dir .
+
+# Or download specific files
+huggingface-cli download Realcat/image_retrieval_checkpoints mixvpr/onnx/mixvpr_fp16.onnx --local-dir .
+huggingface-cli download Realcat/image_retrieval_checkpoints mixvpr/coreml/ --local-dir .
+```
+
+### Available Models
+
+| Format | HF Path | Size | Latency (M-series) | CosSim | Status |
+|---|---|---|---|---|---|
+| ONNX | `mixvpr/onnx/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | ✓ |
+| ONNX | `mixvpr/onnx/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | ✓ Recommended |
+| CoreML | `mixvpr/coreml/mixvpr_fp16.mlpackage/` | 20.8 MB | **3.1 ms** | 0.9999 | ✓ Recommended |
+| CoreML | `mixvpr/coreml/mixvpr_int8.mlpackage/` | 10.5 MB | **3.3 ms** | 0.9983 | ✓ |
+
+> **Note:** Images must be resized to 320×320. The model produces a 4096-dim L2-normalized global descriptor.
 
 ### Setup
 
@@ -127,17 +153,6 @@ Pre-built ONNX and CoreML models with FP16 / INT8 quantization are provided.
 uv venv --python 3.10
 uv pip install torch torchvision onnx onnxruntime onnxconverter-common coremltools Pillow numpy tqdm
 ```
-
-### Available Models
-
-| Format | Path | Size | Latency (M-series) | CosSim | Status |
-|---|---|---|---|---|---|
-| ONNX | `onnx_models/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | ✓ |
-| ONNX | `onnx_models/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | ✓ Recommended |
-| CoreML | `coreml_models/mixvpr_fp16.mlpackage` | 20.8 MB | **3.1 ms** | 0.9999 | ✓ Recommended |
-| CoreML | `coreml_models/mixvpr_int8.mlpackage` | 10.5 MB | **3.3 ms** | 0.9983 | ✓ |
-
-> **Note:** Images must be resized to 320×320. The model produces a 4096-dim L2-normalized global descriptor.
 
 ### Inference
 
