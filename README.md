@@ -138,12 +138,12 @@ huggingface-cli download Realcat/image_retrieval_checkpoints mixvpr/coreml/ --lo
 
 ### Available Models
 
-| Format | HF Path | Size | Latency (M-series) | CosSim | Status |
+| Format | Model | Size | Latency (M-series) | CosSim | Download |
 |---|---|---|---|---|---|
-| ONNX | `mixvpr/onnx/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | ✓ |
-| ONNX | `mixvpr/onnx/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | ✓ Recommended |
-| CoreML | `mixvpr/coreml/mixvpr_fp16.mlpackage/` | 20.8 MB | **3.1 ms** | 0.9999 | ✓ Recommended |
-| CoreML | `mixvpr/coreml/mixvpr_int8.mlpackage/` | 10.5 MB | **3.3 ms** | 0.9983 | ✓ |
+| ONNX FP32 | `mixvpr/onnx/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp32.onnx) |
+| ONNX FP16 | `mixvpr/onnx/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp16.onnx) |
+| CoreML FP16 | `mixvpr/coreml/mixvpr_fp16.mlpackage/` | 20.8 MB | **3.1 ms** | 0.9999 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_fp16.mlpackage) |
+| CoreML INT8 | `mixvpr/coreml/mixvpr_int8.mlpackage/` | 10.5 MB | **3.3 ms** | 0.9983 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_int8.mlpackage) |
 
 > **Note:** Images must be resized to 320×320. The model produces a 4096-dim L2-normalized global descriptor.
 
