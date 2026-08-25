@@ -244,9 +244,9 @@ re-export before uploading.
 
 ### Mobile (iOS) demo
 
-MixVPR runs comfortably in real time on a phone. `ios_demo/` contains **PlaceLens**, a SwiftUI app
+MixVPR runs comfortably in real time on a phone. `app/` contains **PlaceLens**, a SwiftUI app
 (live camera → descriptor → multi-view place matching, sessions, benchmark) that bundles MixVPR and
-[MegaLoc](https://github.com/gmberton/MegaLoc) CoreML exports; see [`ios_demo/README.md`](ios_demo/README.md).
+[MegaLoc](https://github.com/gmberton/MegaLoc) CoreML exports; see [`app/README.md`](app/README.md).
 
 Measured on **iPhone 15 Pro Max (A17 Pro, iOS 26.5)**, inference only, median:
 

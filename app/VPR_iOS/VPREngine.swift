@@ -25,7 +25,7 @@ final class VPREngine {
         self.compute = compute
         self.inputSize = model.inputSize
         guard let url = model.bundleURL else {
-            throw EngineError(description: "\(model.resource).mlmodelc is not bundled — run ios_demo/prepare_models.sh")
+            throw EngineError(description: "\(model.resource).mlmodelc is not bundled — run app/prepare_models.sh")
         }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = compute.units

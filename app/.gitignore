@@ -1,0 +1,5 @@
+*.xcodeproj
+VPR_iOS/Models/
+VPR_iOS/Info.plist
+build/
+DerivedData/

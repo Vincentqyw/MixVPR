@@ -64,6 +64,7 @@ struct SettingsSheet: View {
 
                 Section {
                     Button { state.runBenchmark() } label: { Label("Run benchmark", systemImage: "speedometer") }
+                    NavigationLink { AboutView() } label: { Label("About", systemImage: "info.circle") }
                 } footer: {
                     Text("\(deviceModelIdentifier()) · iOS \(UIDevice.current.systemVersion)")
                 }
@@ -132,6 +133,76 @@ struct BenchSheet: View {
             .navigationTitle("Benchmark")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+    }
+}
+
+struct AboutView: View {
+    private var version: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(v) (\(b))"
+    }
+
+    var body: some View {
+        List {
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 12) {
+                        Image(uiImage: UIImage(named: "AppIcon") ?? UIImage())
+                            .resizable().frame(width: 56, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("PlaceLens").font(.title3.weight(.semibold))
+                            Text("VPR_iOS · version \(version)").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("On-device visual place recognition. The live camera frame is turned into a global descriptor by a CoreML model and compared, by cosine similarity, with the images you captured in a session — entirely on the phone, nothing leaves the device. Built to measure how VPR models behave on Apple silicon (ANE / GPU / CPU) and as a small field tool for indoor/outdoor relocalisation experiments.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("Models") {
+                aboutLink("MixVPR", "ResNet-50 + feature mixing · 320² · 4096-d (Ali-bey, Chaib-draa, Giguère; WACV 2023)",
+                          "https://github.com/amaralibey/MixVPR")
+                aboutLink("MegaLoc", "DINOv2 ViT-B + SALAD aggregation · 322² · 8448-d (Berton, Masone; 2025)",
+                          "https://github.com/gmberton/MegaLoc")
+                aboutLink("CoreML / ONNX checkpoints", "Realcat/image_retrieval_checkpoints on Hugging Face (mixvpr/, megaloc/)",
+                          "https://huggingface.co/Realcat/image_retrieval_checkpoints")
+            }
+
+            Section("Source") {
+                aboutLink("Vincentqyw/MixVPR", "This app (app/), export scripts and mobile benchmarks",
+                          "https://github.com/Vincentqyw/MixVPR")
+                aboutLink("Vincentqyw/megaloc", "MegaLoc iOS / Neural Engine export recipe",
+                          "https://github.com/Vincentqyw/megaloc")
+            }
+
+            Section("Author") {
+                aboutLink("Vincent Qin", "github.com/Vincentqyw", "https://github.com/Vincentqyw")
+            }
+
+            Section {
+                Text("MixVPR and MegaLoc are used under their respective open-source licenses; model weights belong to their authors. This app is provided as-is for research and evaluation.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("About")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func aboutLink(_ title: String, _ subtitle: String, _ url: String) -> some View {
+        Link(destination: URL(string: url)!) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.tertiary)
+            }
         }
     }
 }

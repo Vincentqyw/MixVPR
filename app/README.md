@@ -84,9 +84,9 @@ PIL bicubic/Lanczos on the PC); descriptors that share a database should share a
 
 ```bash
 brew install xcodegen                     # once
-cd ios_demo
-./prepare_models.sh                       # compiles the .mlpackages → MixVPRDemo/Models/*.mlmodelc, generates the .xcodeproj
-open MixVPRDemo.xcodeproj                 # set your team, run on a device (ANE needs real hardware)
+cd app
+./prepare_models.sh                       # compiles the .mlpackages → VPR_iOS/Models/*.mlmodelc, generates the .xcodeproj
+open VPR_iOS.xcodeproj                 # set your team, run on a device (ANE needs real hardware)
 ```
 
 Model sources: MixVPR from `../coreml_models/` ([HuggingFace](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml)),
@@ -96,9 +96,9 @@ Missing MegaLoc packages are skipped; the app only lists models that are bundled
 Command line (device paired in Xcode, Developer Mode on):
 
 ```bash
-xcodebuild -project MixVPRDemo.xcodeproj -scheme MixVPRDemo -configuration Release \
+xcodebuild -project VPR_iOS.xcodeproj -scheme VPR_iOS -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath build -allowProvisioningUpdates build
-xcrun devicectl device install app --device <UDID> build/Build/Products/Release-iphoneos/MixVPRDemo.app
+xcrun devicectl device install app --device <UDID> build/Build/Products/Release-iphoneos/VPR_iOS.app
 xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --bench   # BENCH lines
 xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --embed   # EMBED lines
 xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --log     # LIVE lines

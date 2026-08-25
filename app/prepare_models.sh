@@ -12,13 +12,13 @@ cd "$(dirname "$0")"
 MEGALOC_SIZE="${MEGALOC_SIZE:-322}"
 [ "$MEGALOC_SIZE" = "518" ] && DEFAULT_DIR=../../megaloc/coreml_ios || DEFAULT_DIR=../../megaloc/coreml_ios_$MEGALOC_SIZE
 MEGALOC_DIR="${MEGALOC_DIR:-$DEFAULT_DIR}"
-mkdir -p MixVPRDemo/Models
+mkdir -p VPR_iOS/Models
 
 compile() {  # compile <src.mlpackage> <bundle name>
-  rm -rf "MixVPRDemo/Models/$2.mlmodelc"
+  rm -rf "VPR_iOS/Models/$2.mlmodelc"
   tmp=$(mktemp -d)
   xcrun coremlcompiler compile "$1" "$tmp" >/dev/null
-  mv "$tmp"/*.mlmodelc "MixVPRDemo/Models/$2.mlmodelc"
+  mv "$tmp"/*.mlmodelc "VPR_iOS/Models/$2.mlmodelc"
   rm -rf "$tmp"
   echo "  $2.mlmodelc  <-  $1"
 }
