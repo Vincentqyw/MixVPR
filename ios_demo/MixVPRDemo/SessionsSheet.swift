@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// All places (sessions) with their live best-view similarity. Tap to switch, swipe to delete.
 struct SessionsSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -7,102 +8,96 @@ struct SessionsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                ForEach(state.sessions) { s in
+                ForEach(state.sessions.reversed()) { s in
+                    let score = state.stats.sessionScores[s.id]
                     Button {
                         state.worker.openSession(s.id)
-                        state.selectedPlaceID = nil
                         dismiss()
                     } label: {
-                        HStack {
+                        HStack(spacing: 12) {
+                            Group {
+                                if let c = s.cover {
+                                    Image(uiImage: c).resizable().scaledToFill()
+                                } else {
+                                    Color.white.opacity(0.08)
+                                }
+                            }
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.name).foregroundStyle(.primary)
-                                Text("\(s.placeCount) places · \(s.imageCount) views · \(s.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("\(s.images.count) views · \(s.createdAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            if s.id == state.session?.id { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                            if let score {
+                                Text(String(format: "%.2f", score))
+                                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                                    .foregroundStyle(state.color(for: state.level(for: score)))
+                            }
+                            if s.id == state.currentID { Image(systemName: "checkmark").foregroundStyle(.tint) }
                         }
                     }
                     .contextMenu {
-                        Button { state.beginRename(.session(s.id)) } label: { Label("Rename", systemImage: "pencil") }
+                        Button { state.beginRename(s.id) } label: { Label("Rename", systemImage: "pencil") }
                         Button(role: .destructive) { state.worker.deleteSession(s.id) } label: { Label("Delete", systemImage: "trash") }
                     }
                 }
-                .onDelete { idx in idx.map { state.sessions[$0].id }.forEach { state.worker.deleteSession($0) } }
+                .onDelete { idx in
+                    let list = Array(state.sessions.reversed())
+                    idx.map { list[$0].id }.forEach { state.worker.deleteSession($0) }
+                }
             }
-            .navigationTitle("Sessions")
+            .navigationTitle("Places")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button { state.worker.createSession(); state.selectedPlaceID = nil; dismiss() } label: { Image(systemName: "plus") }
+                    Button { state.newSession(); dismiss() } label: { Image(systemName: "plus") }
                 }
             }
         }
     }
 }
 
-struct PlaceDetailSheet: View {
+struct ImageDetailSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
-    private let columns = [GridItem(.adaptive(minimum: 96), spacing: 10)]
 
     var body: some View {
         NavigationStack {
             Group {
-                if let p = state.detailPlace {
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 10) {
-                            ForEach(p.images) { img in
-                                let s = state.stats.imageScores[img.id]
-                                ZStack(alignment: .bottomLeading) {
-                                    Image(uiImage: img.thumbnail)
-                                        .resizable().scaledToFill()
-                                        .aspectRatio(1, contentMode: .fill)
-                                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                    if let s {
-                                        Text(String(format: "%.2f", s))
-                                            .font(.caption2.monospacedDigit().weight(.semibold))
-                                            .foregroundStyle(state.color(for: state.level(for: s)))
-                                            .padding(.horizontal, 6).padding(.vertical, 3)
-                                            .background(.black.opacity(0.55), in: Capsule())
-                                            .padding(6)
-                                    }
-                                }
-                                .contextMenu {
-                                    Button(role: .destructive) { state.worker.deleteImage(img.id, from: p.id) } label: {
-                                        Label("Delete view", systemImage: "trash")
-                                    }
-                                }
+                if let img = state.detailImage {
+                    let score = state.stats.imageScores[img.id]
+                    VStack(spacing: 14) {
+                        Image(uiImage: img.thumbnail)
+                            .resizable().scaledToFit()
+                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .padding(.horizontal)
+                        HStack {
+                            Text(img.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                .font(.footnote).foregroundStyle(.secondary)
+                            Spacer()
+                            if let score {
+                                Text(String(format: "live similarity %.2f", score))
+                                    .font(.footnote.monospacedDigit())
+                                    .foregroundStyle(state.color(for: state.level(for: score)))
                             }
-                            Button { state.capture(into: p.id) } label: {
-                                VStack(spacing: 6) {
-                                    Image(systemName: "camera.fill").font(.title3)
-                                    Text("Add view").font(.caption)
-                                }
-                                .frame(maxWidth: .infinity)
-                                .aspectRatio(1, contentMode: .fit)
-                                .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            }
-                            .buttonStyle(.plain)
                         }
-                        .padding()
-                        Text("Long-press a view to delete it. A place's score is the best of its views.")
-                            .font(.caption).foregroundStyle(.tertiary).padding(.horizontal)
+                        .padding(.horizontal, 24)
+                        Spacer()
                     }
-                    .navigationTitle(p.name)
+                    .padding(.top)
+                    .navigationTitle(state.session?.name ?? "")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
-                        ToolbarItem(placement: .confirmationAction) {
-                            Menu {
-                                Button { state.beginRename(.place(p.id)) } label: { Label("Rename", systemImage: "pencil") }
-                                Button(role: .destructive) { state.worker.deletePlace(p.id); dismiss() } label: { Label("Delete place", systemImage: "trash") }
-                            } label: { Image(systemName: "ellipsis.circle") }
+                        ToolbarItem(placement: .destructiveAction) {
+                            Button(role: .destructive) { state.worker.deleteImage(img.id); dismiss() } label: { Image(systemName: "trash") }
                         }
                     }
                 } else {
-                    ContentUnavailableView("Place removed", systemImage: "mappin.slash")
+                    ContentUnavailableView("View removed", systemImage: "photo")
                 }
             }
         }

@@ -4,11 +4,6 @@ import UIKit
 
 enum MatchLevel { case none, weak, confident }
 
-enum RenameTarget: Identifiable {
-    case session(UUID), place(UUID)
-    var id: UUID { switch self { case .session(let i), .place(let i): return i } }
-}
-
 @MainActor
 final class AppState: ObservableObject {
     @Published var model: VPRModel { didSet { defaults.set(model.rawValue, forKey: "model"); reload() } }
@@ -16,10 +11,9 @@ final class AppState: ObservableObject {
     @Published var thresholds: [ModelFamily: Float] { didSet { saveThresholds() } }
     @Published var status = "Starting…"
     @Published var stats = FrameStats()
-    @Published var session: Session?
-    @Published var sessions: [SessionSummary] = []
-    @Published var selectedPlaceID: UUID?
-    @Published var detailPlaceID: UUID?
+    @Published var sessions: [Session] = []
+    @Published var currentID: UUID?
+    @Published var detailImageID: UUID?
     @Published var benchResults: [BenchResult] = []
     @Published var benchRunning = false
     @Published var benchStopped = false
@@ -28,7 +22,7 @@ final class AppState: ObservableObject {
     @Published var showSessions = false
     @Published var cameraError: String?
     @Published var flash = false
-    @Published var renameTarget: RenameTarget?
+    @Published var renamingID: UUID?
     @Published var renameText = ""
 
     let camera = CameraManager()
@@ -55,24 +49,21 @@ final class AppState: ObservableObject {
 
         worker.onStatus = { [weak self] s in Task { @MainActor in self?.status = s } }
         worker.onStats = { [weak self] st in Task { @MainActor in self?.stats = st } }
-        worker.onSession = { [weak self] s in
+        worker.onSessions = { [weak self] list, current in
             Task { @MainActor in
                 guard let self else { return }
-                withAnimation(.spring(duration: 0.35)) { self.session = s }
-                if let s { self.defaults.set(s.id.uuidString, forKey: "session") }
-                if let sel = self.selectedPlaceID, !(s?.places.contains { $0.id == sel } ?? false) { self.selectedPlaceID = nil }
-                if let det = self.detailPlaceID, !(s?.places.contains { $0.id == det } ?? false) { self.detailPlaceID = nil }
+                withAnimation(.spring(duration: 0.35)) { self.sessions = list; self.currentID = current }
+                if let current { self.defaults.set(current.uuidString, forKey: "session") }
+                if let d = self.detailImageID, !(self.session?.images.contains { $0.id == d } ?? false) { self.detailImageID = nil }
             }
         }
-        worker.onSessions = { [weak self] list in Task { @MainActor in self?.sessions = list } }
         camera.onFrame = { [weak self] pb in self?.worker.handle(frame: pb) }
     }
 
     // MARK: derived
 
-    var places: [Place] { session?.places ?? [] }
-    var selectedPlace: Place? { selectedPlaceID.flatMap { id in places.first { $0.id == id } } }
-    var detailPlace: Place? { detailPlaceID.flatMap { id in places.first { $0.id == id } } }
+    var session: Session? { currentID.flatMap { id in sessions.first { $0.id == id } } }
+    var detailImage: PlaceImage? { detailImageID.flatMap { id in session?.images.first { $0.id == id } } }
     var compute: ComputeChoice {
         get { computes[model.family] ?? model.family.defaultCompute }
         set { computes[model.family] = newValue }
@@ -81,10 +72,11 @@ final class AppState: ObservableObject {
         get { thresholds[model.family] ?? model.family.defaultThreshold }
         set { thresholds[model.family] = newValue }
     }
-    var bestPlace: Place? {
+    var bestSession: Session? {
         guard let b = stats.best else { return nil }
-        return places.first { $0.id == b.id }
+        return sessions.first { $0.id == b.id }
     }
+    var hasAnyImages: Bool { sessions.contains { !$0.images.isEmpty } }
     func level(for score: Float?) -> MatchLevel {
         guard let s = score else { return .none }
         if s >= threshold { return .confident }
@@ -124,48 +116,33 @@ final class AppState: ObservableObject {
     private func saveComputes() { for (f, c) in computes { defaults.set(c.rawValue, forKey: "compute.\(f.rawValue)") } }
     private func saveThresholds() { for (f, t) in thresholds { defaults.set(t, forKey: "threshold.\(f.rawValue)") } }
 
-    // MARK: capture
+    // MARK: actions
 
-    /// Shutter: adds a view to the selected place, or creates a new place (which becomes selected).
-    func capture(into placeID: UUID? = nil) {
+    /// Shutter: adds the current frame to the current session.
+    func capture() {
         impact.impactOccurred()
         flash = true
         withAnimation(.easeOut(duration: 0.4)) { flash = false }
-        worker.capture(into: placeID ?? selectedPlaceID) { [weak self] id in
-            Task { @MainActor in
-                guard let self else { return }
-                if let id {
-                    self.notify.notificationOccurred(.success)
-                    if placeID == nil { self.selectedPlaceID = id }
-                } else {
-                    self.notify.notificationOccurred(.error)
-                }
-            }
+        worker.capture { [weak self] ok in
+            Task { @MainActor in self?.notify.notificationOccurred(ok ? .success : .error) }
         }
     }
 
-    func togglePlace(_ p: Place) {
-        if selectedPlaceID == p.id { detailPlaceID = p.id } else { selectedPlaceID = p.id }
+    func newSession() {
+        impact.impactOccurred()
+        worker.createSession()
     }
 
-    // MARK: rename
-
-    func beginRename(_ target: RenameTarget) {
-        switch target {
-        case .session(let id): renameText = sessions.first { $0.id == id }?.name ?? session?.name ?? ""
-        case .place(let id): renameText = places.first { $0.id == id }?.name ?? ""
-        }
-        renameTarget = target
+    func beginRename(_ id: UUID) {
+        renameText = sessions.first { $0.id == id }?.name ?? ""
+        renamingID = id
     }
 
     func commitRename() {
-        defer { renameTarget = nil }
+        defer { renamingID = nil }
         let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, let t = renameTarget else { return }
-        switch t {
-        case .session(let id): worker.renameSession(id, to: name)
-        case .place(let id): worker.renamePlace(id, to: name)
-        }
+        guard !name.isEmpty, let id = renamingID else { return }
+        worker.renameSession(id, to: name)
     }
 
     // MARK: benchmark

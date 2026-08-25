@@ -48,8 +48,11 @@ struct StatsPill: View {
             .contentTransition(.numericText())
     }
 
+    /// "model 9.1 ms" = inference time per frame; "camera 24 fps" = frames the camera delivers.
     private var text: String {
-        state.stats.fps > 0 ? String(format: "%.1f ms · %.0f fps", state.stats.inferMs, state.stats.fps) : state.status
+        state.stats.cameraFps > 0
+            ? String(format: "model %.1f ms · camera %.0f fps", state.stats.inferMs, state.stats.cameraFps)
+            : state.status
     }
 }
 
@@ -94,13 +97,13 @@ struct MatchChip: View {
 
     var body: some View {
         Group {
-            if state.places.isEmpty {
-                Text("Point at a place, then tap the shutter")
+            if !state.hasAnyImages {
+                Text("Tap the shutter to add views of this place")
                     .font(.footnote)
                     .foregroundStyle(.white.opacity(0.9))
             } else {
                 HStack(spacing: 10) {
-                    if let p = state.bestPlace, let cover = p.cover {
+                    if let p = state.bestSession, let cover = p.cover {
                         Image(uiImage: cover)
                             .resizable().scaledToFill()
                             .frame(width: 30, height: 30)
@@ -116,7 +119,8 @@ struct MatchChip: View {
                             .contentTransition(.numericText())
                     }
                 }
-                .animation(.easeInOut(duration: 0.2), value: state.stats.best?.score)
+                .animation(.easeInOut(duration: 0.3), value: state.stats.best?.score)
+                .animation(.easeInOut(duration: 0.3), value: state.stats.best?.id)
             }
         }
         .padding(.horizontal, 14)
@@ -124,7 +128,7 @@ struct MatchChip: View {
         .background(.ultraThinMaterial, in: Capsule())
     }
 
-    private func label(for p: Place) -> String {
+    private func label(for p: Session) -> String {
         switch state.matchLevel {
         case .confident: return p.name
         case .weak: return "\(p.name)?"

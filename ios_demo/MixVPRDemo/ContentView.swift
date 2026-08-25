@@ -14,7 +14,7 @@ struct ContentView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
             Shelf(state: state)
-                .frame(height: 104)
+                .frame(height: 96)
             Controls(state: state)
                 .frame(height: 104)
         }
@@ -30,22 +30,22 @@ struct ContentView: View {
                 .presentationDragIndicator(.visible)
         }
         .sheet(isPresented: $state.showBench) { BenchSheet(state: state) }
-        .sheet(isPresented: Binding(get: { state.detailPlaceID != nil }, set: { if !$0 { state.detailPlaceID = nil } })) {
-            PlaceDetailSheet(state: state)
-                .presentationDetents([.medium, .large])
+        .sheet(isPresented: Binding(get: { state.detailImageID != nil }, set: { if !$0 { state.detailImageID = nil } })) {
+            ImageDetailSheet(state: state)
+                .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
-        .alert("Rename", isPresented: Binding(get: { state.renameTarget != nil },
-                                              set: { if !$0 { state.renameTarget = nil } })) {
+        .alert("Rename place", isPresented: Binding(get: { state.renamingID != nil },
+                                                    set: { if !$0 { state.renamingID = nil } })) {
             TextField("Name", text: $state.renameText)
             Button("Save") { state.commitRename() }
-            Button("Cancel", role: .cancel) { state.renameTarget = nil }
+            Button("Cancel", role: .cancel) { state.renamingID = nil }
         }
         .task { await state.start() }
     }
 }
 
-// MARK: - Top bar: session on the left, model on the right
+// MARK: - Top bar: current place (session) on the left, model on the right
 
 struct TopBar: View {
     @ObservedObject var state: AppState
@@ -53,11 +53,13 @@ struct TopBar: View {
     var body: some View {
         HStack {
             Chip {
-                state.showSessions = true
+                if let id = state.currentID { state.beginRename(id) }
             } content: {
-                Image(systemName: "square.stack").font(.caption)
+                Image(systemName: "mappin.and.ellipse").font(.caption)
                 Text(state.session?.name ?? "…").fontWeight(.semibold).lineLimit(1)
-                Image(systemName: "chevron.down").font(.caption2).foregroundStyle(.tertiary)
+                if let n = state.session?.images.count, n > 0 {
+                    Text("\(n)").foregroundStyle(.secondary).monospacedDigit()
+                }
             }
             Spacer()
             Chip {
@@ -87,32 +89,47 @@ struct Chip<Content: View>: View {
     }
 }
 
-// MARK: - Controls: one shutter, one caption
+// MARK: - Controls: new place · shutter · places list
 
 struct Controls: View {
     @ObservedObject var state: AppState
 
     var body: some View {
-        VStack(spacing: 10) {
-            ShutterButton { state.capture() }
-            caption
+        ZStack {
+            HStack {
+                RoundIconButton(systemName: "plus", label: "New") { state.newSession() }
+                Spacer()
+                RoundIconButton(systemName: "square.stack", label: "Places") { state.showSessions = true }
+            }
+            .padding(.horizontal, 44)
+            VStack(spacing: 8) {
+                ShutterButton { state.capture() }
+                Text("Add to **\(state.session?.name ?? "…")**")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
+}
 
-    @ViewBuilder private var caption: some View {
-        if let p = state.selectedPlace {
-            HStack(spacing: 6) {
-                Text("Add view to **\(p.name)**")
-                Button { state.selectedPlaceID = nil } label: {
-                    Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                }
-                .buttonStyle(.plain)
+struct RoundIconButton: View {
+    let systemName: String
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 5) {
+                Image(systemName: systemName)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 46)
+                    .background(.white.opacity(0.10), in: Circle())
+                Text(label).font(.caption2).foregroundStyle(.tertiary)
             }
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-        } else {
-            Text("New place").font(.footnote).foregroundStyle(.tertiary)
         }
+        .buttonStyle(.plain)
     }
 }
 
@@ -122,8 +139,8 @@ struct ShutterButton: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                Circle().stroke(.white, lineWidth: 3.5).frame(width: 70, height: 70)
-                Circle().fill(.white).frame(width: 57, height: 57)
+                Circle().stroke(.white, lineWidth: 3.5).frame(width: 66, height: 66)
+                Circle().fill(.white).frame(width: 54, height: 54)
             }
         }
         .buttonStyle(ShutterStyle())

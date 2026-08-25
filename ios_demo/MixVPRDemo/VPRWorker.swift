@@ -13,13 +13,13 @@ struct Match {
 struct FrameStats {
     var inferMs = 0.0
     var preMs = 0.0
-    var fps = 0.0
-    var placeScores: [UUID: Float] = [:]
+    var cameraFps = 0.0
+    var sessionScores: [UUID: Float] = [:]
     var imageScores: [UUID: Float] = [:]
-    var best: Match?
+    var best: Match?          // best-matching session
 }
 
-/// Owns the engine, the open session and every per-frame computation on one serial queue.
+/// Owns the engine, all sessions and every per-frame computation on one serial queue.
 final class VPRWorker {
     private let queue = DispatchQueue(label: "vpr.work", qos: .userInteractive)
     private let inFlight = OSAllocatedUnfairLock(initialState: false)
@@ -32,12 +32,24 @@ final class VPRWorker {
     private var paused = false
     private var latest: [Float]?
     private var lastFrame: CVPixelBuffer?
-    private var session: Session?
+    private var sessions: [Session] = []
+    private var currentID: UUID?
     private var frames = 0
     private var windowStart = CACurrentMediaTime()
     private var fps = 0.0
     private var emaInfer = 0.0
     private var emaPre = 0.0
+    // Display smoothing: scores are EMA-filtered, the best match only switches after a
+    // challenger has led by `switchMargin` for `switchFrames` frames, and the UI is fed at ~4 Hz.
+    private var smoothSession: [UUID: Float] = [:]
+    private var smoothImage: [UUID: Float] = [:]
+    private var stableBest: Match?
+    private var challenger: (id: UUID, frames: Int)?
+    private var lastEmit: CFTimeInterval = 0
+    private let scoreAlpha: Float = 0.35
+    private let switchMargin: Float = 0.03
+    private let switchFrames = 4
+    private let emitInterval: CFTimeInterval = 0.25
     private let logMode = CommandLine.arguments.contains("--log")
     private var emaBurst: [Double] = []
     private var lastLog = CACurrentMediaTime()
@@ -45,74 +57,65 @@ final class VPRWorker {
     /// All callbacks fire on the worker queue.
     var onStats: ((FrameStats) -> Void)?
     var onStatus: ((String) -> Void)?
-    var onSession: ((Session?) -> Void)?
-    var onSessions: (([SessionSummary]) -> Void)?
+    var onSessions: (([Session], UUID?) -> Void)?
+
+    private var currentIndex: Int? { sessions.firstIndex { $0.id == currentID } }
 
     // MARK: sessions
 
     func bootstrap(lastSessionID: UUID?) {
         queue.async {
-            var list = SessionStore.list()
-            if list.isEmpty {
-                SessionStore.save(Session(id: UUID(), name: "Session 1", createdAt: Date(), places: []))
-                list = SessionStore.list()
-            }
-            let id = lastSessionID.flatMap { id in list.contains { $0.id == id } ? id : nil } ?? list[0].id
-            self.session = SessionStore.load(id)
-            self.onSessions?(list)
-            self.onSession?(self.session)
+            self.sessions = SessionStore.loadAll()
+            if self.sessions.isEmpty { self.sessions = [self.newSession()] }
+            self.currentID = lastSessionID.flatMap { id in self.sessions.contains { $0.id == id } ? id : nil } ?? self.sessions.last!.id
+            self.emit()
             self.reindex()
         }
     }
 
+    private func newSession() -> Session {
+        let s = Session(id: UUID(), name: "Place \(sessions.count + 1)", createdAt: Date(), images: [])
+        SessionStore.save(s)
+        return s
+    }
+
     func openSession(_ id: UUID) {
         queue.async {
-            guard id != self.session?.id, let s = SessionStore.load(id) else { return }
-            self.session = s
-            self.onSession?(s)
-            self.reindex()
+            guard self.sessions.contains(where: { $0.id == id }) else { return }
+            self.currentID = id
+            self.emit()
         }
     }
 
     func createSession() {
         queue.async {
-            let n = SessionStore.list().count + 1
-            let s = Session(id: UUID(), name: "Session \(n)", createdAt: Date(), places: [])
-            SessionStore.save(s)
-            self.session = s
-            self.onSessions?(SessionStore.list())
-            self.onSession?(s)
+            let s = self.newSession()
+            self.sessions.append(s)
+            self.currentID = s.id
+            self.emit()
         }
     }
 
     func renameSession(_ id: UUID, to name: String) {
         queue.async {
-            if self.session?.id == id {
-                self.session?.name = name
-                self.persist()
-            } else if var s = SessionStore.load(id) {
-                s.name = name
-                SessionStore.save(s)
-            }
-            self.onSessions?(SessionStore.list())
+            guard let i = self.sessions.firstIndex(where: { $0.id == id }) else { return }
+            self.sessions[i].name = name
+            SessionStore.save(self.sessions[i])
+            self.emit()
         }
     }
 
     func deleteSession(_ id: UUID) {
         queue.async {
             SessionStore.delete(id)
-            var list = SessionStore.list()
-            if self.session?.id == id {
-                if list.isEmpty {
-                    SessionStore.save(Session(id: UUID(), name: "Session 1", createdAt: Date(), places: []))
-                    list = SessionStore.list()
-                }
-                self.session = SessionStore.load(list[0].id)
-                self.onSession?(self.session)
-            }
-            self.onSessions?(list)
+            self.sessions.removeAll { $0.id == id }
+            if self.sessions.isEmpty { self.sessions = [self.newSession()] }
+            if self.currentID == id { self.currentID = self.sessions.last!.id }
+            self.emit()
         }
     }
+
+    private func emit() { onSessions?(sessions, currentID) }
 
     // MARK: engine
 
@@ -128,6 +131,7 @@ final class VPRWorker {
                 self.engine = e
                 self.emaInfer = 0; self.emaPre = 0; self.frames = 0; self.fps = 0
                 self.windowStart = CACurrentMediaTime()
+                self.smoothSession = [:]; self.smoothImage = [:]; self.stableBest = nil; self.challenger = nil
                 self.onStatus?(String(format: "%@ · %@ · ready in %.0f ms", model.title, compute.rawValue, e.loadMs))
             } catch {
                 self.onStatus?("Load failed: \(error)")
@@ -139,23 +143,24 @@ final class VPRWorker {
 
     /// Computes descriptors for the current model family for every stored image that lacks one.
     private func reindex() {
-        guard let engine, var s = session else { return }
+        guard let engine else { return }
         let fam = model.family
-        var missing = 0
-        for p in s.places { for i in p.images where i.descriptors[fam] == nil { missing += 1 } }
+        let missing = sessions.reduce(0) { $0 + $1.images.filter { $0.descriptors[fam] == nil }.count }
         guard missing > 0 else { return }
         var done = 0
-        for pi in s.places.indices {
-            for ii in s.places[pi].images.indices where s.places[pi].images[ii].descriptors[fam] == nil {
+        for si in sessions.indices {
+            var changed = false
+            for ii in sessions[si].images.indices where sessions[si].images[ii].descriptors[fam] == nil {
                 done += 1
                 onStatus?("Indexing \(done)/\(missing) for \(fam.rawValue)…")
-                if let d = engine.embed(image: s.places[pi].images[ii].thumbnail) {
-                    s.places[pi].images[ii].descriptors[fam] = d
+                if let d = engine.embed(image: sessions[si].images[ii].thumbnail) {
+                    sessions[si].images[ii].descriptors[fam] = d
+                    changed = true
                 }
             }
+            if changed { SessionStore.save(sessions[si]) }
         }
-        session = s
-        persist()
+        emit()
         onStatus?(String(format: "%@ · %@", model.title, compute.rawValue))
     }
 
@@ -196,25 +201,50 @@ final class VPRWorker {
             windowStart = t2
         }
 
-        var placeScores: [UUID: Float] = [:]
+        // Raw cosine scores for this frame, then EMA-smoothed for display.
+        var sessionScores: [UUID: Float] = [:]
         var imageScores: [UUID: Float] = [:]
-        var best: Match?
         let fam = model.family
-        for p in session?.places ?? [] {
-            var pbest: Float = -1
-            for img in p.images {
+        for s in sessions {
+            var sbest: Float = -1
+            for img in s.images {
                 guard let v = img.descriptors[fam], v.count == d.count else { continue }
-                var s: Float = 0
-                vDSP_dotpr(v, 1, d, 1, &s, vDSP_Length(d.count))
-                imageScores[img.id] = s
-                pbest = max(pbest, s)
+                var score: Float = 0
+                vDSP_dotpr(v, 1, d, 1, &score, vDSP_Length(d.count))
+                let sm = smoothImage[img.id].map { $0 + (score - $0) * scoreAlpha } ?? score
+                smoothImage[img.id] = sm
+                imageScores[img.id] = sm
+                sbest = max(sbest, score)
             }
-            guard pbest > -1 else { continue }
-            placeScores[p.id] = pbest
-            if best == nil || pbest > best!.score { best = Match(id: p.id, score: pbest) }
+            guard sbest > -1 else { continue }
+            let sm = smoothSession[s.id].map { $0 + (sbest - $0) * scoreAlpha } ?? sbest
+            smoothSession[s.id] = sm
+            sessionScores[s.id] = sm
         }
-        onStats?(FrameStats(inferMs: emaInfer, preMs: emaPre, fps: fps,
-                            placeScores: placeScores, imageScores: imageScores, best: best))
+        smoothSession = smoothSession.filter { sessionScores[$0.key] != nil }
+        smoothImage = smoothImage.filter { imageScores[$0.key] != nil }
+
+        // Hysteresis on the winner.
+        let leader = sessionScores.max { $0.value < $1.value }
+        if let cur = stableBest, let curScore = sessionScores[cur.id] {
+            if let leader, leader.key != cur.id, leader.value > curScore + switchMargin {
+                challenger = (leader.key, (challenger?.id == leader.key ? challenger!.frames : 0) + 1)
+                if challenger!.frames >= switchFrames { stableBest = Match(id: leader.key, score: leader.value); challenger = nil }
+                else { stableBest = Match(id: cur.id, score: curScore) }
+            } else {
+                challenger = nil
+                stableBest = Match(id: cur.id, score: curScore)
+            }
+        } else {
+            stableBest = leader.map { Match(id: $0.key, score: $0.value) }
+            challenger = nil
+        }
+
+        if t2 - lastEmit >= emitInterval {
+            lastEmit = t2
+            onStats?(FrameStats(inferMs: emaInfer, preMs: emaPre, cameraFps: fps,
+                                sessionScores: sessionScores, imageScores: imageScores, best: stableBest))
+        }
     }
 
     private func logBurst(_ engine: VPREngine, from t: CFTimeInterval) {
@@ -237,57 +267,28 @@ final class VPRWorker {
         }
     }
 
-    // MARK: places & images
+    // MARK: images
 
-    /// Captures the current frame into `placeID`, or into a new place when nil. Returns the place id.
-    func capture(into placeID: UUID?, completion: @escaping (UUID?) -> Void) {
+    /// Captures the current frame into the current session.
+    func capture(completion: @escaping (Bool) -> Void) {
         queue.async {
             guard let d = self.latest, let engine = self.engine, let img = engine.thumbnail(),
-                  let jpeg = img.jpegData(compressionQuality: 0.85), self.session != nil else { completion(nil); return }
-            let image = PlaceImage(id: UUID(), descriptors: [self.model.family: d], jpeg: jpeg, thumbnail: img, createdAt: Date())
-            var target = placeID
-            if let id = placeID, let i = self.session!.places.firstIndex(where: { $0.id == id }) {
-                self.session!.places[i].images.append(image)
-            } else {
-                let n = self.session!.places.count + 1
-                let p = Place(id: UUID(), name: "Place \(n)", images: [image])
-                self.session!.places.append(p)
-                target = p.id
-            }
-            self.persist()
-            completion(target)
+                  let jpeg = img.jpegData(compressionQuality: 0.85), let i = self.currentIndex else { completion(false); return }
+            self.sessions[i].images.append(PlaceImage(id: UUID(), descriptors: [self.model.family: d], jpeg: jpeg,
+                                                      thumbnail: img, createdAt: Date()))
+            SessionStore.save(self.sessions[i])
+            self.emit()
+            completion(true)
         }
     }
 
-    func renamePlace(_ id: UUID, to name: String) {
+    func deleteImage(_ imageID: UUID) {
         queue.async {
-            guard let i = self.session?.places.firstIndex(where: { $0.id == id }) else { return }
-            self.session!.places[i].name = name
-            self.persist()
+            guard let i = self.sessions.firstIndex(where: { $0.images.contains { $0.id == imageID } }) else { return }
+            self.sessions[i].images.removeAll { $0.id == imageID }
+            SessionStore.save(self.sessions[i])
+            self.emit()
         }
-    }
-
-    func deletePlace(_ id: UUID) {
-        queue.async {
-            self.session?.places.removeAll { $0.id == id }
-            self.persist()
-        }
-    }
-
-    func deleteImage(_ imageID: UUID, from placeID: UUID) {
-        queue.async {
-            guard let i = self.session?.places.firstIndex(where: { $0.id == placeID }) else { return }
-            self.session!.places[i].images.removeAll { $0.id == imageID }
-            if self.session!.places[i].images.isEmpty { self.session!.places.remove(at: i) }
-            self.persist()
-        }
-    }
-
-    private func persist() {
-        guard let s = session else { return }
-        SessionStore.save(s)
-        onSession?(s)
-        onSessions?(SessionStore.list())
     }
 
     // MARK: diagnostics
