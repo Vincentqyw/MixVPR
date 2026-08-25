@@ -149,8 +149,8 @@ struct AboutView: View {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 12) {
-                        Image(uiImage: UIImage(named: "AppIcon") ?? UIImage())
-                            .resizable().frame(width: 56, height: 56)
+                        Image("Logo")
+                            .resizable().scaledToFit().frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                         VStack(alignment: .leading, spacing: 2) {
                             Text("PlaceLens").font(.title3.weight(.semibold))
