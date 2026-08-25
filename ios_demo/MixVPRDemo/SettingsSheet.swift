@@ -39,6 +39,16 @@ struct SettingsSheet: View {
                 }
 
                 Section {
+                    Toggle("Search across all sessions", isOn: $state.crossSession)
+                } header: {
+                    Text("Retrieval")
+                } footer: {
+                    Text(state.crossSession
+                         ? "The live view is matched against the images of every session."
+                         : "The live view is matched only against the images of the current session.")
+                }
+
+                Section {
                     HStack {
                         Slider(value: Binding(get: { Double(state.threshold) }, set: { state.threshold = Float($0) }),
                                in: 0.3...0.95, step: 0.01)
@@ -49,7 +59,7 @@ struct SettingsSheet: View {
                 } header: {
                     Text("Match threshold · \(state.model.family.rawValue)")
                 } footer: {
-                    Text("Cosine similarity to the closest stored view. Above the threshold the brackets turn green; within 0.15 below, amber.")
+                    Text("Cosine similarity to the closest stored image. Above the threshold the brackets turn green; within 0.15 below, amber.")
                 }
 
                 Section {

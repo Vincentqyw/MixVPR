@@ -9,6 +9,7 @@ final class AppState: ObservableObject {
     @Published var model: VPRModel { didSet { defaults.set(model.rawValue, forKey: "model"); reload() } }
     @Published var computes: [ModelFamily: ComputeChoice] { didSet { saveComputes(); reload() } }
     @Published var thresholds: [ModelFamily: Float] { didSet { saveThresholds() } }
+    @Published var crossSession: Bool { didSet { defaults.set(crossSession, forKey: "crossSession"); worker.setCrossSession(crossSession) } }
     @Published var status = "Starting…"
     @Published var stats = FrameStats()
     @Published var sessions: [Session] = []
@@ -46,6 +47,7 @@ final class AppState: ObservableObject {
         }
         computes = c
         thresholds = t
+        crossSession = defaults.bool(forKey: "crossSession")
 
         worker.onStatus = { [weak self] s in Task { @MainActor in self?.status = s } }
         worker.onStats = { [weak self] st in Task { @MainActor in self?.stats = st } }
@@ -54,7 +56,7 @@ final class AppState: ObservableObject {
                 guard let self else { return }
                 withAnimation(.spring(duration: 0.35)) { self.sessions = list; self.currentID = current }
                 if let current { self.defaults.set(current.uuidString, forKey: "session") }
-                if let d = self.detailImageID, !(self.session?.images.contains { $0.id == d } ?? false) { self.detailImageID = nil }
+                if let d = self.detailImageID, self.locate(image: d) == nil { self.detailImageID = nil }
             }
         }
         camera.onFrame = { [weak self] pb in self?.worker.handle(frame: pb) }
@@ -63,7 +65,15 @@ final class AppState: ObservableObject {
     // MARK: derived
 
     var session: Session? { currentID.flatMap { id in sessions.first { $0.id == id } } }
-    var detailImage: PlaceImage? { detailImageID.flatMap { id in session?.images.first { $0.id == id } } }
+    /// Finds an image in any session: (session, image, 1-based index within the session).
+    func locate(image id: UUID) -> (session: Session, image: PlaceImage, index: Int)? {
+        for s in sessions {
+            if let i = s.images.firstIndex(where: { $0.id == id }) { return (s, s.images[i], i + 1) }
+        }
+        return nil
+    }
+    var detail: (session: Session, image: PlaceImage, index: Int)? { detailImageID.flatMap(locate(image:)) }
+    var bestMatch: (session: Session, image: PlaceImage, index: Int)? { stats.best.flatMap { locate(image: $0.imageID) } }
     var compute: ComputeChoice {
         get { computes[model.family] ?? model.family.defaultCompute }
         set { computes[model.family] = newValue }
@@ -71,10 +81,6 @@ final class AppState: ObservableObject {
     var threshold: Float {
         get { thresholds[model.family] ?? model.family.defaultThreshold }
         set { thresholds[model.family] = newValue }
-    }
-    var bestSession: Session? {
-        guard let b = stats.best else { return nil }
-        return sessions.first { $0.id == b.id }
     }
     var hasAnyImages: Bool { sessions.contains { !$0.images.isEmpty } }
     func level(for score: Float?) -> MatchLevel {
@@ -98,6 +104,7 @@ final class AppState: ObservableObject {
     func start() async {
         guard !started else { return }
         started = true
+        worker.setCrossSession(crossSession)
         worker.bootstrap(lastSessionID: defaults.string(forKey: "session").flatMap(UUID.init(uuidString:)))
         reload()
         if !Self.launchFlagsHandled {

@@ -5,8 +5,10 @@ import os
 import QuartzCore
 import UIKit
 
+/// The single most similar stored image.
 struct Match {
-    let id: UUID
+    let imageID: UUID
+    let sessionID: UUID
     let score: Float
 }
 
@@ -14,9 +16,9 @@ struct FrameStats {
     var inferMs = 0.0
     var preMs = 0.0
     var cameraFps = 0.0
-    var sessionScores: [UUID: Float] = [:]
+    var sessionScores: [UUID: Float] = [:]   // best image per session (searched sessions only)
     var imageScores: [UUID: Float] = [:]
-    var best: Match?          // best-matching session
+    var best: Match?
 }
 
 /// Owns the engine, all sessions and every per-frame computation on one serial queue.
@@ -34,6 +36,8 @@ final class VPRWorker {
     private var lastFrame: CVPixelBuffer?
     private var sessions: [Session] = []
     private var currentID: UUID?
+    /// false → retrieve only inside the current session (default); true → across all sessions.
+    private var crossSession = false
     private var frames = 0
     private var windowStart = CACurrentMediaTime()
     private var fps = 0.0
@@ -41,10 +45,9 @@ final class VPRWorker {
     private var emaPre = 0.0
     // Display smoothing: scores are EMA-filtered, the best match only switches after a
     // challenger has led by `switchMargin` for `switchFrames` frames, and the UI is fed at ~4 Hz.
-    private var smoothSession: [UUID: Float] = [:]
     private var smoothImage: [UUID: Float] = [:]
     private var stableBest: Match?
-    private var challenger: (id: UUID, frames: Int)?
+    private var challenger: (id: UUID, frames: Int)?   // keyed by image id
     private var lastEmit: CFTimeInterval = 0
     private let scoreAlpha: Float = 0.35
     private let switchMargin: Float = 0.03
@@ -61,6 +64,17 @@ final class VPRWorker {
 
     private var currentIndex: Int? { sessions.firstIndex { $0.id == currentID } }
 
+    func setCrossSession(_ on: Bool) {
+        queue.async {
+            self.crossSession = on
+            self.resetSmoothing()
+        }
+    }
+
+    private func resetSmoothing() {
+        smoothImage = [:]; stableBest = nil; challenger = nil
+    }
+
     // MARK: sessions
 
     func bootstrap(lastSessionID: UUID?) {
@@ -74,7 +88,7 @@ final class VPRWorker {
     }
 
     private func newSession() -> Session {
-        let s = Session(id: UUID(), name: "Place \(sessions.count + 1)", createdAt: Date(), images: [])
+        let s = Session(id: UUID(), name: "Session \(sessions.count + 1)", createdAt: Date(), images: [])
         SessionStore.save(s)
         return s
     }
@@ -83,6 +97,7 @@ final class VPRWorker {
         queue.async {
             guard self.sessions.contains(where: { $0.id == id }) else { return }
             self.currentID = id
+            self.resetSmoothing()
             self.emit()
         }
     }
@@ -131,7 +146,7 @@ final class VPRWorker {
                 self.engine = e
                 self.emaInfer = 0; self.emaPre = 0; self.frames = 0; self.fps = 0
                 self.windowStart = CACurrentMediaTime()
-                self.smoothSession = [:]; self.smoothImage = [:]; self.stableBest = nil; self.challenger = nil
+                self.resetSmoothing()
                 self.onStatus?(String(format: "%@ · %@ · ready in %.0f ms", model.title, compute.rawValue, e.loadMs))
             } catch {
                 self.onStatus?("Load failed: \(error)")
@@ -204,39 +219,36 @@ final class VPRWorker {
         // Raw cosine scores for this frame, then EMA-smoothed for display.
         var sessionScores: [UUID: Float] = [:]
         var imageScores: [UUID: Float] = [:]
+        var leader: Match?
         let fam = model.family
-        for s in sessions {
+        for sess in sessions where crossSession || sess.id == currentID {
             var sbest: Float = -1
-            for img in s.images {
+            for img in sess.images {
                 guard let v = img.descriptors[fam], v.count == d.count else { continue }
                 var score: Float = 0
                 vDSP_dotpr(v, 1, d, 1, &score, vDSP_Length(d.count))
                 let sm = smoothImage[img.id].map { $0 + (score - $0) * scoreAlpha } ?? score
                 smoothImage[img.id] = sm
                 imageScores[img.id] = sm
-                sbest = max(sbest, score)
+                sbest = max(sbest, sm)
+                if leader == nil || sm > leader!.score { leader = Match(imageID: img.id, sessionID: sess.id, score: sm) }
             }
-            guard sbest > -1 else { continue }
-            let sm = smoothSession[s.id].map { $0 + (sbest - $0) * scoreAlpha } ?? sbest
-            smoothSession[s.id] = sm
-            sessionScores[s.id] = sm
+            if sbest > -1 { sessionScores[sess.id] = sbest }
         }
-        smoothSession = smoothSession.filter { sessionScores[$0.key] != nil }
         smoothImage = smoothImage.filter { imageScores[$0.key] != nil }
 
-        // Hysteresis on the winner.
-        let leader = sessionScores.max { $0.value < $1.value }
-        if let cur = stableBest, let curScore = sessionScores[cur.id] {
-            if let leader, leader.key != cur.id, leader.value > curScore + switchMargin {
-                challenger = (leader.key, (challenger?.id == leader.key ? challenger!.frames : 0) + 1)
-                if challenger!.frames >= switchFrames { stableBest = Match(id: leader.key, score: leader.value); challenger = nil }
-                else { stableBest = Match(id: cur.id, score: curScore) }
+        // Hysteresis on the winning image.
+        if let cur = stableBest, let curScore = imageScores[cur.imageID] {
+            if let leader, leader.imageID != cur.imageID, leader.score > curScore + switchMargin {
+                challenger = (leader.imageID, (challenger?.id == leader.imageID ? challenger!.frames : 0) + 1)
+                if challenger!.frames >= switchFrames { stableBest = leader; challenger = nil }
+                else { stableBest = Match(imageID: cur.imageID, sessionID: cur.sessionID, score: curScore) }
             } else {
                 challenger = nil
-                stableBest = Match(id: cur.id, score: curScore)
+                stableBest = Match(imageID: cur.imageID, sessionID: cur.sessionID, score: curScore)
             }
         } else {
-            stableBest = leader.map { Match(id: $0.key, score: $0.value) }
+            stableBest = leader
             challenger = nil
         }
 

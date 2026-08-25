@@ -35,7 +35,7 @@ struct ContentView: View {
                 .presentationDetents([.medium])
                 .presentationDragIndicator(.visible)
         }
-        .alert("Rename place", isPresented: Binding(get: { state.renamingID != nil },
+        .alert("Rename session", isPresented: Binding(get: { state.renamingID != nil },
                                                     set: { if !$0 { state.renamingID = nil } })) {
             TextField("Name", text: $state.renameText)
             Button("Save") { state.commitRename() }
@@ -45,7 +45,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Top bar: current place (session) on the left, model on the right
+// MARK: - Top bar: current session on the left, model on the right
 
 struct TopBar: View {
     @ObservedObject var state: AppState
@@ -55,7 +55,7 @@ struct TopBar: View {
             Chip {
                 if let id = state.currentID { state.beginRename(id) }
             } content: {
-                Image(systemName: "mappin.and.ellipse").font(.caption)
+                Image(systemName: "square.stack").font(.caption)
                 Text(state.session?.name ?? "…").fontWeight(.semibold).lineLimit(1)
                 if let n = state.session?.images.count, n > 0 {
                     Text("\(n)").foregroundStyle(.secondary).monospacedDigit()
@@ -89,7 +89,7 @@ struct Chip<Content: View>: View {
     }
 }
 
-// MARK: - Controls: new place · shutter · places list
+// MARK: - Controls: new session · shutter · sessions list
 
 struct Controls: View {
     @ObservedObject var state: AppState
@@ -99,7 +99,7 @@ struct Controls: View {
             HStack {
                 RoundIconButton(systemName: "plus", label: "New") { state.newSession() }
                 Spacer()
-                RoundIconButton(systemName: "square.stack", label: "Places") { state.showSessions = true }
+                RoundIconButton(systemName: "list.bullet", label: "Sessions") { state.showSessions = true }
             }
             .padding(.horizontal, 44)
             VStack(spacing: 8) {

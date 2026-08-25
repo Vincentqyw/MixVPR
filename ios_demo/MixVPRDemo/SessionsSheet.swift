@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// All places (sessions) with their live best-view similarity. Tap to switch, swipe to delete.
+/// All sessions; live best-image similarity is shown for the sessions being searched. Tap to switch, swipe to delete.
 struct SessionsSheet: View {
     @ObservedObject var state: AppState
     @Environment(\.dismiss) private var dismiss
@@ -26,7 +26,7 @@ struct SessionsSheet: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(s.name).foregroundStyle(.primary)
-                                Text("\(s.images.count) views · \(s.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("\(s.images.count) images · \(s.createdAt.formatted(date: .abbreviated, time: .shortened))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
@@ -48,7 +48,7 @@ struct SessionsSheet: View {
                     idx.map { list[$0].id }.forEach { state.worker.deleteSession($0) }
                 }
             }
-            .navigationTitle("Places")
+            .navigationTitle("Sessions")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
@@ -67,15 +67,15 @@ struct ImageDetailSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if let img = state.detailImage {
-                    let score = state.stats.imageScores[img.id]
+                if let d = state.detail {
+                    let score = state.stats.imageScores[d.image.id]
                     VStack(spacing: 14) {
-                        Image(uiImage: img.thumbnail)
+                        Image(uiImage: d.image.thumbnail)
                             .resizable().scaledToFit()
                             .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                             .padding(.horizontal)
                         HStack {
-                            Text(img.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            Text(d.image.createdAt.formatted(date: .abbreviated, time: .shortened))
                                 .font(.footnote).foregroundStyle(.secondary)
                             Spacer()
                             if let score {
@@ -85,19 +85,23 @@ struct ImageDetailSheet: View {
                             }
                         }
                         .padding(.horizontal, 24)
+                        if d.session.id != state.currentID {
+                            Button("Switch to \(d.session.name)") { state.worker.openSession(d.session.id); dismiss() }
+                                .font(.footnote)
+                        }
                         Spacer()
                     }
                     .padding(.top)
-                    .navigationTitle(state.session?.name ?? "")
+                    .navigationTitle("\(d.session.name) · #\(d.index)")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                         ToolbarItem(placement: .destructiveAction) {
-                            Button(role: .destructive) { state.worker.deleteImage(img.id); dismiss() } label: { Image(systemName: "trash") }
+                            Button(role: .destructive) { state.worker.deleteImage(d.image.id); dismiss() } label: { Image(systemName: "trash") }
                         }
                     }
                 } else {
-                    ContentUnavailableView("View removed", systemImage: "photo")
+                    ContentUnavailableView("Image removed", systemImage: "photo")
                 }
             }
         }

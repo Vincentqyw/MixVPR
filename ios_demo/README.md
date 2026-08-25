@@ -5,17 +5,20 @@ Capture views of places into sessions, then watch the viewfinder recognise them 
 
 ## The app
 
-A **session is one place**: a named set of images captured around it. The viewfinder is matched
-against every image of every session; the best session (max over its images) is shown.
+A **session is one capture session**: a named set of images that may come from one place or many.
+Retrieval runs **inside the current session by default**; Settings › Retrieval › *Search across all
+sessions* widens it to every session. Either way the result is a specific image — shown as
+*Session · #index* — and tapping it opens a preview.
 
 | | |
 |---|---|
 | **Viewfinder** | 4:3 camera; the corner brackets mark the square crop the model sees and double as the match indicator: white → nothing, amber → weak, green → confident. The corner pill reads `model 9.1 ms · camera 24 fps` — model inference time per frame, and the frame rate the camera delivers. |
-| **Shutter** | Adds the current frame to the current session. Walk around a spot and tap several times to cover it from different angles. |
-| **＋ New** (bottom-left) | Starts a new session (a new place) and makes it current. **Places** (bottom-right) lists all sessions with their live similarity, switch by tapping, swipe to delete, long-press to rename. The top-left chip shows the current session and its image count; tap it to rename. |
-| **Shelf** | Images of the current session, newest first, each with a live similarity bar and score. Tap to inspect, long-press to delete. |
-| **Match display** | Scores are EMA-smoothed (α = 0.35) and the winner only switches after a challenger leads by 0.03 for 4 frames; the UI is refreshed at 4 Hz so names and numbers do not flicker. |
-| **Settings** (top-right) | Model (MixVPR/MegaLoc × FP16/INT8), compute unit (ANE/GPU/CPU), per-family match threshold, benchmark. Sessions carry descriptors for *both* model families — switching model re-indexes any image that lacks one (from the stored crop). |
+| **Match card** | Thumbnail of the best-matching stored image, its session and index, and the similarity. Tap to preview it (with a shortcut to switch to that session when it belongs to another one). |
+| **Shutter** | Adds the current frame to the current session. |
+| **＋ New** (bottom-left) | Starts a new session and makes it current. **Sessions** (bottom-right) lists every session with its image count and, for the sessions being searched, its live best similarity; tap to switch, swipe to delete, long-press to rename. The top-left chip shows the current session and its image count; tap it to rename. |
+| **Shelf** | Images of the current session, newest first, each with a live similarity bar and score; the best match is ringed. Tap to preview, long-press to delete. |
+| **Smoothing** | Scores are EMA-filtered (α = 0.35), the winning image only changes after a challenger leads by 0.03 for 4 frames, and the UI is refreshed at 4 Hz, so names and numbers do not flicker. |
+| **Settings** (top-right) | Model (MixVPR/MegaLoc × FP16/INT8), compute unit (ANE/GPU/CPU), retrieval scope, per-family match threshold, benchmark. Sessions carry descriptors for *both* model families — switching model re-indexes any image that lacks one (from the stored crop). |
 | **Benchmark** | Every bundled model × compute unit; MegaLoc uses 8 iterations, MixVPR 50. **Stop** cancels at the next iteration boundary. |
 
 Sessions persist as binary plists in Documents/sessions/. Icon: `Assets.xcassets/AppIcon.appiconset/AppIcon.png`
@@ -108,8 +111,8 @@ xcrun devicectl device process launch --console --device <UDID> com.anureka.mixv
 | `Models.swift` | `VPRModel` (family, precision, resource, input size), `ComputeChoice`; only bundled models are listed. |
 | `VPREngine.swift` | Loads a `.mlmodelc`, preprocesses a `CVPixelBuffer` (centre-crop → N² → ImageNet-normalised fp16 NCHW), runs prediction, L2-normalises. Cancellable benchmark. |
 | `CameraManager.swift` | `AVCaptureSession` (back camera, 640×480 BGRA, portrait) + SwiftUI preview layer. |
-| `Sessions.swift` | `Session (place) → PlaceImage` model and the plist store. |
-| `VPRWorker.swift` | Serial worker: per-frame preprocess → infer → per-image cosine → per-session max, smoothing + hysteresis; session/image CRUD; re-indexing; benchmark with stop. |
+| `Sessions.swift` | `Session → PlaceImage` model and the plist store. |
+| `VPRWorker.swift` | Serial worker: per-frame preprocess → infer → cosine against the searched sessions' images, smoothing + hysteresis on the best image; session/image CRUD; re-indexing; benchmark with stop. |
 | `AppState.swift` | `@MainActor` view state, persisted preferences, capture/rename/benchmark actions. |
 | `ContentView.swift` / `Viewfinder.swift` / `Shelf.swift` / `SessionsSheet.swift` / `SettingsSheet.swift` | UI. |
 
