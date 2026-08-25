@@ -255,8 +255,10 @@ Measured on **iPhone 15 Pro Max (A17 Pro, iOS 26.5)**, inference only, median of
 | CoreML FP16 | **2.6 ms (~360 FPS)** | 14.4 ms (~69 FPS) | 10.9 ms (~93 FPS) |
 | CoreML INT8 | **2.4 ms (~400 FPS)** | 14.9 ms (~68 FPS) | 11.4 ms (~89 FPS) |
 
-Preprocessing adds ~0.2 ms, so the on-device pipeline is ~3 ms/frame on the Neural Engine —
-an order of magnitude below the 33 ms camera frame budget.
+Preprocessing adds ~0.2 ms, so the on-device pipeline is ~3 ms/frame on the Neural Engine at
+full clock (≈11 ms/frame steady-state at camera rate, when iOS keeps the clocks low). iPhone
+descriptors match the PyTorch fp32 checkpoint at cosine 0.99999 (FP16) / 0.9982 (INT8) —
+not bit-identical, but far inside any retrieval threshold. Details in the demo README.
 
 ## Bibtex
 

@@ -28,6 +28,11 @@ final class AppState: ObservableObject {
         started = true
         worker.load(variant: variant, compute: compute)
         if CommandLine.arguments.contains("--bench") { runBenchmark() }
+        if CommandLine.arguments.contains("--embed") {
+            for c in ComputeChoice.allCases { worker.load(variant: .fp16, compute: c); worker.embedTestImage() }
+            worker.load(variant: .int8, compute: .all); worker.embedTestImage()
+            worker.load(variant: variant, compute: compute)
+        }
         guard await CameraManager.requestAccess() else {
             cameraError = "Camera access denied — enable it in Settings › MixVPR."
             return
