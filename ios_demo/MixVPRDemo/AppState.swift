@@ -54,7 +54,8 @@ final class AppState: ObservableObject {
         worker.onSessions = { [weak self] list, current in
             Task { @MainActor in
                 guard let self else { return }
-                withAnimation(.spring(duration: 0.35)) { self.sessions = list; self.currentID = current }
+                self.sessions = list
+                self.currentID = current
                 if let current { self.defaults.set(current.uuidString, forKey: "session") }
                 if let d = self.detailImageID, self.locate(image: d) == nil { self.detailImageID = nil }
             }

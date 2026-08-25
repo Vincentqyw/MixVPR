@@ -31,6 +31,7 @@ struct Viewfinder: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)   // GeometryReader aligns top-leading; keep it centred
         }
     }
 }

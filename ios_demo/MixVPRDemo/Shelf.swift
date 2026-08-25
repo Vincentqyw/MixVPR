@@ -27,6 +27,7 @@ struct Shelf: View {
             }
             .padding(.horizontal, 24)
             .frame(minWidth: UIScreen.main.bounds.width)
+            .animation(.spring(duration: 0.35), value: state.session?.images.count)
         }
     }
 }

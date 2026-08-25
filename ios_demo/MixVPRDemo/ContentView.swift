@@ -19,6 +19,7 @@ struct ContentView: View {
                 .frame(height: 104)
         }
         .background(Color.black.ignoresSafeArea())
+        .ignoresSafeArea(.keyboard)   // the rename alert's keyboard must not squeeze the viewfinder
         .sheet(isPresented: $state.showSessions) {
             SessionsSheet(state: state)
                 .presentationDetents([.medium, .large])

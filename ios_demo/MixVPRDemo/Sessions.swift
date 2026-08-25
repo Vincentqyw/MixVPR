@@ -45,7 +45,14 @@ enum SessionStore {
                 for (k, v) in i.descriptors { if let f = ModelFamily(rawValue: k) { descs[f] = v } }
                 return PlaceImage(id: i.id, descriptors: descs, jpeg: i.jpeg, thumbnail: img, createdAt: i.createdAt)
             }
-            return Session(id: s.id, name: s.name, createdAt: s.createdAt, images: images)
+            // Sessions created by an earlier build were named "Place N"; a session is a capture session.
+            var name = s.name
+            if let r = name.range(of: #"^Place (\d+)$"#, options: .regularExpression) {
+                name = "Session " + name[r].dropFirst(6)
+            }
+            let session = Session(id: s.id, name: name, createdAt: s.createdAt, images: images)
+            if name != s.name { save(session) }
+            return session
         }
         .sorted { $0.createdAt < $1.createdAt }
     }
