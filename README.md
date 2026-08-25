@@ -244,21 +244,24 @@ re-export before uploading.
 
 ### Mobile (iOS) demo
 
-MixVPR runs comfortably in real time on a phone. `ios_demo/` contains a SwiftUI app
-(live camera → descriptor → place matching) with a built-in benchmark; see
-[`ios_demo/README.md`](ios_demo/README.md) for build steps.
+MixVPR runs comfortably in real time on a phone. `ios_demo/` contains **PlaceLens**, a SwiftUI app
+(live camera → descriptor → multi-view place matching, sessions, benchmark) that bundles MixVPR and
+[MegaLoc](https://github.com/gmberton/MegaLoc) CoreML exports; see [`ios_demo/README.md`](ios_demo/README.md).
 
-Measured on **iPhone 15 Pro Max (A17 Pro, iOS 26.5)**, inference only, median of 50 runs:
+Measured on **iPhone 15 Pro Max (A17 Pro, iOS 26.5)**, inference only, median:
 
-| Model | ANE | GPU | CPU |
-|-------|----:|----:|----:|
-| CoreML FP16 | **2.6 ms (~360 FPS)** | 14.4 ms (~69 FPS) | 10.9 ms (~93 FPS) |
-| CoreML INT8 | **2.4 ms (~400 FPS)** | 14.9 ms (~68 FPS) | 11.4 ms (~89 FPS) |
+| Model | Input | ANE | GPU | CPU |
+|-------|------:|----:|----:|----:|
+| MixVPR FP16 | 320² | **2.5 ms (~375 fps)** | 13.6 ms | 10.4 ms |
+| MixVPR INT8 | 320² | **2.5 ms (~370 fps)** | 14.9 ms | 10.9 ms |
+| MegaLoc FP16 | 322² | 128 ms (inaccurate) | **154 ms (6.5 fps)** | 158 ms |
+| MegaLoc INT8 | 322² | 186 ms (inaccurate) | 119 ms | **96 ms (10 fps)** |
+| MegaLoc FP16 | 518² | 633 ms (inaccurate) | 585 ms (1.7 fps) | 658 ms |
 
-Preprocessing adds ~0.2 ms, so the on-device pipeline is ~3 ms/frame on the Neural Engine at
-full clock (≈11 ms/frame steady-state at camera rate, when iOS keeps the clocks low). iPhone
-descriptors match the PyTorch fp32 checkpoint at cosine 0.99999 (FP16) / 0.9982 (INT8) —
-not bit-identical, but far inside any retrieval threshold. Details in the demo README.
+MixVPR on the ANE matches PyTorch fp32 at cosine 0.99999 (INT8: 0.998); steady-state cost at camera
+rate is ≈11 ms/frame because iOS keeps clocks low for a sparse 30 Hz workload. MegaLoc is ~60× heavier
+and, on the A17 Pro's ANE, numerically wrong (cos 0.95) — it runs on the GPU at 6–10 fps. Details and
+the export recipe are in the demo README.
 
 ## Bibtex
 

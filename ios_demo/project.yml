@@ -23,10 +23,13 @@ targets:
     info:
       path: MixVPRDemo/Info.plist
       properties:
-        CFBundleDisplayName: MixVPR
-        NSCameraUsageDescription: MixVPR runs visual place recognition on the live camera feed.
+        CFBundleDisplayName: PlaceLens
+        NSCameraUsageDescription: PlaceLens recognises places from the live camera feed. Frames never leave the device.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIUserInterfaceStyle: Dark
+        UIStatusBarStyle: UIStatusBarStyleLightContent
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.anureka.mixvprdemo
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

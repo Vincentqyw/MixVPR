@@ -1,10 +1,11 @@
 import SwiftUI
 
 @main
-struct MixVPRDemoApp: App {
+struct PlaceLensApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .preferredColorScheme(.dark)
         }
     }
 }

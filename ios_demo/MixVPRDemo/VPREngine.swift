@@ -4,61 +4,38 @@ import CoreVideo
 import QuartzCore
 import UIKit
 
-enum ModelVariant: String, CaseIterable, Identifiable {
-    case fp16 = "FP16"
-    case int8 = "INT8"
-    var id: String { rawValue }
-    var resourceName: String { self == .fp16 ? "mixvpr_fp16" : "mixvpr_int8" }
-}
-
-enum ComputeChoice: String, CaseIterable, Identifiable {
-    case all = "ANE"
-    case cpuGPU = "GPU"
-    case cpu = "CPU"
-    var id: String { rawValue }
-    var units: MLComputeUnits {
-        switch self {
-        case .all: return .all
-        case .cpuGPU: return .cpuAndGPU
-        case .cpu: return .cpuOnly
-        }
-    }
-}
-
 struct EngineError: Error, CustomStringConvertible {
     let description: String
 }
 
-/// One compiled MixVPR CoreML model plus a reusable preprocessing pipeline
-/// (center-crop → 320×320 → ImageNet normalisation → fp16 NCHW tensor).
+/// One compiled CoreML VPR model plus a reusable preprocessing pipeline
+/// (centre-crop → N×N → ImageNet normalisation → fp16 NCHW tensor).
 /// Not thread-safe: use from a single serial queue.
-final class MixVPREngine {
-    static let inputSize = 320
-    static let descriptorDim = 4096
-
-    let variant: ModelVariant
+final class VPREngine {
+    let model: VPRModel
     let compute: ComputeChoice
+    let inputSize: Int
     private(set) var loadMs: Double = 0
-    private let model: MLModel
+    private let mlModel: MLModel
     private let input: MLMultiArray
-    private var resized: vImage_Buffer   // 320×320 BGRA copy of the last preprocessed frame
+    private var resized: vImage_Buffer   // N×N BGRA copy of the last preprocessed frame
 
-    init(variant: ModelVariant, compute: ComputeChoice) throws {
-        self.variant = variant
+    init(model: VPRModel, compute: ComputeChoice) throws {
+        self.model = model
         self.compute = compute
-        guard let url = Bundle.main.url(forResource: variant.resourceName, withExtension: "mlmodelc", subdirectory: "Models") else {
-            throw EngineError(description: "Missing \(variant.resourceName).mlmodelc — run ios_demo/prepare_models.sh")
+        self.inputSize = model.inputSize
+        guard let url = model.bundleURL else {
+            throw EngineError(description: "\(model.resource).mlmodelc is not bundled — run ios_demo/prepare_models.sh")
         }
         let cfg = MLModelConfiguration()
         cfg.computeUnits = compute.units
         let t0 = CACurrentMediaTime()
-        model = try MLModel(contentsOf: url, configuration: cfg)
-        let n = Self.inputSize
+        mlModel = try MLModel(contentsOf: url, configuration: cfg)
+        let n = inputSize
         input = try MLMultiArray(shape: [1, 3, NSNumber(value: n), NSNumber(value: n)], dataType: .float16)
         resized = try vImage_Buffer(width: n, height: n, bitsPerPixel: 32)
-        // Warm-up: the first prediction pays for ANE/GPU program compilation.
         fillSynthetic()
-        _ = try infer()
+        _ = try infer()   // warm-up: first prediction pays for ANE/GPU program compilation
         loadMs = (CACurrentMediaTime() - t0) * 1000
     }
 
@@ -66,7 +43,7 @@ final class MixVPREngine {
 
     /// Deterministic test pattern, used by the benchmark before the camera delivers a frame.
     func fillSynthetic() {
-        let n = Self.inputSize
+        let n = inputSize
         let px = resized.data.bindMemory(to: UInt8.self, capacity: resized.rowBytes * n)
         for y in 0..<n {
             let row = px + y * resized.rowBytes
@@ -81,7 +58,7 @@ final class MixVPREngine {
         fillTensorFromResized()
     }
 
-    /// Center-crops the BGRA pixel buffer to a square, scales it to 320×320 and fills the input tensor.
+    /// Centre-crops the BGRA pixel buffer to a square, scales it to N×N and fills the input tensor.
     func preprocess(_ pb: CVPixelBuffer) {
         CVPixelBufferLockBaseAddress(pb, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
@@ -97,7 +74,7 @@ final class MixVPREngine {
     }
 
     private func fillTensorFromResized() {
-        let n = Self.inputSize
+        let n = inputSize
         let plane = n * n
         // (v/255 - mean) / std  ==  v * scale - offset   (RGB order)
         let scale: [Float] = [1 / (255 * 0.229), 1 / (255 * 0.224), 1 / (255 * 0.225)]
@@ -120,10 +97,10 @@ final class MixVPREngine {
         }
     }
 
-    /// Runs the model on the current tensor and returns an L2-normalised 4096-d descriptor.
+    /// Runs the model on the current tensor and returns an L2-normalised descriptor.
     func infer() throws -> [Float] {
         let provider = try MLDictionaryFeatureProvider(dictionary: ["images": MLFeatureValue(multiArray: input)])
-        let result = try model.prediction(from: provider)
+        let result = try mlModel.prediction(from: provider)
         guard let arr = result.featureValue(for: "descriptor")?.multiArrayValue else {
             throw EngineError(description: "model returned no 'descriptor' output")
         }
@@ -149,9 +126,16 @@ final class MixVPREngine {
         return v
     }
 
-    /// The last preprocessed 320×320 frame as an image (for place thumbnails).
+    /// Embeds a stored image (any size; centre-cropped and resized like a camera frame).
+    func embed(image: UIImage) -> [Float]? {
+        guard let cg = image.cgImage, let pb = makePixelBuffer(from: cg) else { return nil }
+        preprocess(pb)
+        return try? infer()
+    }
+
+    /// The last preprocessed N×N frame as an image (for place thumbnails).
     func thumbnail() -> UIImage? {
-        let n = Self.inputSize
+        let n = inputSize
         let info = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
         guard let ctx = CGContext(data: resized.data, width: n, height: n, bitsPerComponent: 8,
                                   bytesPerRow: resized.rowBytes, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info),
@@ -164,62 +148,80 @@ final class MixVPREngine {
 
 struct BenchResult: Identifiable {
     let id = UUID()
-    let variant: ModelVariant
+    let model: VPRModel
     let compute: ComputeChoice
     let loadMs: Double
     let preMs: Double
     let meanMs: Double
     let medianMs: Double
     let p95Ms: Double
+    let iterations: Int
     let error: String?
 
     var fps: Double { meanMs > 0 ? 1000 / meanMs : 0 }
     var line: String {
-        if let error { return "\(variant.rawValue) \(compute.rawValue) ERROR \(error)" }
-        return String(format: "%@ %@ load=%.0fms pre=%.2fms mean=%.2fms median=%.2fms p95=%.2fms fps=%.1f",
-                      variant.rawValue, compute.rawValue, loadMs, preMs, meanMs, medianMs, p95Ms, fps)
+        if let error { return "\(model.rawValue) \(compute.rawValue) ERROR \(error)" }
+        return String(format: "%@ %@ load=%.0fms pre=%.2fms mean=%.2fms median=%.2fms p95=%.2fms fps=%.1f n=%d",
+                      model.rawValue, compute.rawValue, loadMs, preMs, meanMs, medianMs, p95Ms, fps, iterations)
     }
 }
 
-extension MixVPREngine {
-    /// Times every model × compute-unit combination. `pixelBuffer` (a real camera frame) is optional;
-    /// without it a synthetic 480×640 BGRA frame stands in so preprocessing is still measured.
-    static func benchmark(iterations: Int, pixelBuffer: CVPixelBuffer?, progress: (BenchResult) -> Void) {
+extension VPREngine {
+    /// Times every bundled model × compute-unit combination. `shouldStop` is polled between
+    /// combinations and between iterations so a run can be cancelled promptly.
+    static func benchmark(models: [VPRModel], pixelBuffer: CVPixelBuffer?, shouldStop: () -> Bool,
+                          progress: (BenchResult) -> Void) {
         let pixelBuffer = pixelBuffer ?? makeSyntheticFrame(width: 480, height: 640)
-        for variant in ModelVariant.allCases {
+        for model in models {
+            let iterations = model.benchIterations
             for compute in ComputeChoice.allCases {
-                do {
-                    let e = try MixVPREngine(variant: variant, compute: compute)
-                    var preMs = 0.0
-                    if let pb = pixelBuffer {
-                        e.preprocess(pb)
-                        let t = CACurrentMediaTime()
-                        for _ in 0..<20 { e.preprocess(pb) }
-                        preMs = (CACurrentMediaTime() - t) * 50
-                    } else {
-                        e.fillSynthetic()
+                if shouldStop() { return }
+                autoreleasepool {
+                    do {
+                        let e = try VPREngine(model: model, compute: compute)
+                        var preMs = 0.0
+                        if let pb = pixelBuffer {
+                            e.preprocess(pb)
+                            let t = CACurrentMediaTime()
+                            for _ in 0..<10 { e.preprocess(pb) }
+                            preMs = (CACurrentMediaTime() - t) * 100
+                        }
+                        for _ in 0..<min(3, iterations) { _ = try e.infer() }   // settle clocks
+                        var times: [Double] = []
+                        for _ in 0..<iterations {
+                            if shouldStop() { break }
+                            let t = CACurrentMediaTime()
+                            _ = try e.infer()
+                            times.append((CACurrentMediaTime() - t) * 1000)
+                        }
+                        guard !times.isEmpty else { return }
+                        let sorted = times.sorted()
+                        progress(BenchResult(model: model, compute: compute, loadMs: e.loadMs, preMs: preMs,
+                                             meanMs: times.reduce(0, +) / Double(times.count),
+                                             medianMs: sorted[sorted.count / 2],
+                                             p95Ms: sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))],
+                                             iterations: times.count, error: nil))
+                    } catch {
+                        progress(BenchResult(model: model, compute: compute, loadMs: 0, preMs: 0, meanMs: 0,
+                                             medianMs: 0, p95Ms: 0, iterations: iterations, error: "\(error)"))
                     }
-                    for _ in 0..<5 { _ = try e.infer() }   // settle clocks
-                    var times: [Double] = []
-                    times.reserveCapacity(iterations)
-                    for _ in 0..<iterations {
-                        let t = CACurrentMediaTime()
-                        _ = try e.infer()
-                        times.append((CACurrentMediaTime() - t) * 1000)
-                    }
-                    let sorted = times.sorted()
-                    progress(BenchResult(variant: variant, compute: compute, loadMs: e.loadMs, preMs: preMs,
-                                         meanMs: times.reduce(0, +) / Double(times.count),
-                                         medianMs: sorted[sorted.count / 2],
-                                         p95Ms: sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))],
-                                         error: nil))
-                } catch {
-                    progress(BenchResult(variant: variant, compute: compute, loadMs: 0, preMs: 0,
-                                         meanMs: 0, medianMs: 0, p95Ms: 0, error: "\(error)"))
                 }
             }
         }
     }
+}
+
+/// Draws a CGImage into a new BGRA pixel buffer.
+func makePixelBuffer(from cg: CGImage) -> CVPixelBuffer? {
+    guard let pb = makeSyntheticFrame(width: cg.width, height: cg.height) else { return nil }
+    CVPixelBufferLockBaseAddress(pb, [])
+    defer { CVPixelBufferUnlockBaseAddress(pb, []) }
+    let info = CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+    guard let ctx = CGContext(data: CVPixelBufferGetBaseAddress(pb), width: cg.width, height: cg.height,
+                              bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(pb),
+                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return nil }
+    ctx.draw(cg, in: CGRect(x: 0, y: 0, width: cg.width, height: cg.height))
+    return pb
 }
 
 /// A BGRA pixel buffer filled with a gradient, used when the camera has not delivered a frame yet.

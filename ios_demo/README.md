@@ -1,104 +1,113 @@
-# MixVPR iOS demo
+# PlaceLens — on-device visual place recognition (iOS)
 
-A minimal SwiftUI app that runs the CoreML MixVPR model on the live camera feed:
-register a few places, then watch the app recognise them in real time.
-It also ships a built-in benchmark over every model × compute-unit combination.
+A small SwiftUI app that runs **MixVPR** and **MegaLoc** CoreML models on the live camera feed.
+Capture views of places into sessions, then watch the viewfinder recognise them in real time.
 
-<p align="center">
-  <b>Live view</b> · 320×320 centre crop · 4096-d descriptor per frame · cosine match against registered places
-</p>
+## The app
+
+| | |
+|---|---|
+| **Viewfinder** | 4:3 camera; the corner brackets mark the square crop the model sees and double as the match indicator: white → nothing, amber → weak, green → confident. A pill in the corner shows inference ms · fps. |
+| **Shutter** | Captures the current frame. With no place selected it creates a new place (which becomes selected); with a place selected it adds another *view* of it — so tapping repeatedly while walking around a spot builds a multi-view place. `×` next to the caption deselects. |
+| **Shelf** | Places of the open session, each with its cover, view count and a live similarity bar. Tap to select, tap the selected one to open its views, long-press for Views / Rename / Delete. |
+| **Views sheet** | Grid of a place's views with live per-view similarity; long-press a view to delete it; “Add view” captures from the live camera without leaving the sheet. A place's score is the best of its views. |
+| **Sessions** (top-left) | Independent databases. Create (+), switch, rename, swipe-to-delete. Sessions persist as binary plists in Documents/sessions/ and carry descriptors for *both* model families — switching model re-indexes any views that lack a descriptor for it (from the stored crop). |
+| **Settings** (top-right) | Model (MixVPR/MegaLoc × FP16/INT8), compute unit (ANE/GPU/CPU), per-family match threshold, benchmark. |
+| **Benchmark** | Every bundled model × compute unit; MegaLoc uses 8 iterations, MixVPR 50. **Stop** cancels at the next iteration boundary. |
+
+Icon: `Assets.xcassets/AppIcon.appiconset/AppIcon.png` (generated procedurally — viewfinder brackets + pin).
 
 ## Measured on iPhone 15 Pro Max (A17 Pro, iOS 26.5)
 
-Inference-only latency of the compiled `.mlmodelc`, 50 iterations after warm-up (`--bench` mode):
+Inference only, median of the built-in benchmark after warm-up (`--bench`):
 
-| Model | Compute | Median | p95 | Throughput | First load |
-|-------|---------|-------:|----:|-----------:|-----------:|
-| FP16 | **ANE** | **2.6 ms** | 3.6 ms | **~360 FPS** | 40–50 ms |
-| INT8 | **ANE** | **2.4 ms** | 3.1 ms | **~400 FPS** | 35 ms (1.7 s on first-ever launch) |
-| FP16 | GPU | 14.4 ms | 15.5 ms | ~69 FPS | 70 ms–2 s |
-| INT8 | GPU | 14.9 ms | 15.7 ms | ~68 FPS | 1–13 s |
-| FP16 | CPU | 10.9 ms | 11.2 ms | ~93 FPS | 60 ms |
-| INT8 | CPU | 11.4 ms | 11.6 ms | ~89 FPS | 60 ms |
+| Model | Input | ANE | GPU | CPU | cos vs PyTorch fp32 (best unit) |
+|-------|------:|----:|----:|----:|------:|
+| MixVPR FP16 (21 MB) | 320² | **2.5 ms · 375 fps** | 13.6 ms | 10.4 ms | 0.99999 (ANE) |
+| MixVPR INT8 (11 MB) | 320² | **2.5 ms · 370 fps** | 14.9 ms | 10.9 ms | 0.9983 (ANE) |
+| MegaLoc FP16 (437 MB) | 322² | 128 ms ⚠ | **154 ms · 6.5 fps** | 158 ms | 0.999996 (GPU) |
+| MegaLoc INT8 (219 MB) | 322² | 186 ms ⚠ | 119 ms · 8.4 fps | **96 ms · 10 fps** | 0.9985 (GPU) |
+| MegaLoc FP16 | 518² (paper res.) | 633 ms ⚠ | 585 ms · 1.7 fps | 658 ms | 0.99999 (GPU) |
+| MegaLoc INT8 | 518² | 698 ms ⚠ | 615 ms | 746 ms | 0.9988 (GPU) |
 
-Preprocessing (centre crop → vImage scale → ImageNet-normalised fp16 NCHW) costs **~0.2 ms**.
-With the Neural Engine the whole pipeline is ~3 ms/frame, so the live demo is
-capped by the camera at 30 FPS while using <10 % of a core. The 21 MB FP16 model is
-the recommended default; INT8 halves the size for no measurable speed gain on ANE.
+⚠ MegaLoc on the iPhone's ANE is inaccurate (cos 0.94–0.95 vs PyTorch) — see below — and no faster,
+so the app defaults MegaLoc to the GPU and MixVPR to the ANE. Preprocessing costs 0.2–0.4 ms.
 
-### Why the live view shows ~9 ms when the benchmark says 2.6 ms
+### Why the live view shows ~9 ms for MixVPR when the benchmark says 2.6 ms
 
-The benchmark runs inferences back-to-back, so the CPU and Neural Engine sit at their
-top clock. The live view is a sparse 24–30 Hz workload (a ~10 ms burst, then ~25 ms idle),
-and iOS power management keeps the clocks low for that duty cycle. `--log` mode proves it by
-running five inferences per frame — they get faster one after another as the clocks ramp:
+The benchmark runs inferences back-to-back, so the CPU and Neural Engine sit at their top
+clock. The live view is a sparse 24–30 Hz workload and iOS keeps the clocks low for that duty
+cycle. `--log` mode runs five inferences per frame and they get faster one after another as
+the clocks ramp (`7.1 → 5.5 → 4.9 → 4.3 → 3.8 ms`). Not camera contention (the benchmark with
+the camera running still gives 2.8 ms), not thread QoS. Peak throughput ≈ 350 fps; steady-state
+cost at camera rate ≈ 11 ms/frame — a third of the 33 ms budget at a fraction of the power.
 
-```
-LIVE FP16 ANE fps=24.8 pre=1.68ms infer#1=7.07ms then 5.51 → 4.85 → 4.31 → 3.78 ms
-```
+### MegaLoc on the Neural Engine
 
-The same ramp shows up in the preprocessing loop (0.2 ms hot vs ~2 ms in the live view).
-This is not camera contention (running the benchmark with the camera active still gives
-2.8 ms) and not thread QoS (`.userInteractive` changes nothing). Practical reading: peak
-throughput is ~350 FPS, steady-state cost at camera rate is ~11 ms/frame including
-preprocessing, which is still a third of the 33 ms frame budget at a fraction of the power.
+Plain fp16 MegaLoc is accurate on the GPU (cos 0.9998) but collapses on the ANE (cos 0.94):
+DINOv2's activation outliers overflow the ANE's fp16 `layer_norm`/`softmax`. On the M4 Pro,
+keeping every op except `linear/matmul/conv/gelu` in fp32 (`megaloc/export_ios.py`, variant
+`ane`) restores cos 0.9999 on the ANE — but the **A17 Pro's ANE still returns cos 0.95** with
+the same package, and its ANE latency is no better than the GPU because 529–1369-token
+attention does not map well onto it. Conclusion: on iPhone, MegaLoc = GPU (or INT8 on CPU).
+
+At the paper resolution (518²) MegaLoc runs at 1.7 fps on the phone; the bundled export uses
+322² (2.7× faster, cos 0.99999 to PyTorch at the same resolution). Same-image (90 % crop)
+similarity drops from ~0.86 to ~0.81 while neighbouring-frame similarity stays ~0.73–0.76, so
+the default MegaLoc threshold is 0.80 (MixVPR: 0.70). `MEGALOC_SIZE=518 ./prepare_models.sh`
+bundles the 518² export instead — change `VPRModel.inputSize` in `Models.swift` to match.
 
 ### Do iPhone and PC produce the same descriptor?
 
-Not bit-for-bit, but numerically equivalent. `--embed` runs the bundled 320×320
-`test_image.png` through the exact live pipeline; compared with the PyTorch fp32
-checkpoint on the Mac (same image, no resize involved):
+Not bit-for-bit, but numerically equivalent on the recommended unit. `--embed` runs the bundled
+`test_320.png` / `test_322.png` through the exact live pipeline; compared with the PyTorch fp32
+checkpoints on the Mac (same pixels, no resize):
 
-| Descriptor source | cos vs PyTorch fp32 | max |Δ| (unit vectors) | identical bits |
-|-------------------|--------------------:|-------------------------:|---------------:|
-| iPhone CoreML FP16 · ANE | 0.999991 | 2.4e-4 | 0 % |
-| iPhone CoreML FP16 · GPU | 0.999994 | 2.2e-4 | 0 % |
-| iPhone CoreML FP16 · CPU | 0.999889 | 8.6e-4 | 0 % |
-| iPhone CoreML INT8 · ANE | 0.998187 | 3.5e-3 | 0 % |
-| Mac (M4 Pro) CoreML FP16 · ANE | 0.999991 | 2.4e-4 | 0 % |
+| iPhone descriptor | cos vs PyTorch fp32 | max \|Δ\| |
+|---|---:|---:|
+| MixVPR FP16 · ANE / GPU / CPU | 0.999991 / 0.999995 / 0.999883 | 2.6e-4 / 1.8e-4 / 9.4e-4 |
+| MixVPR INT8 · ANE | 0.998273 | 3.4e-3 |
+| MegaLoc FP16 · GPU / CPU / ANE | 0.999996 / 0.998739 / **0.954** | 1.5e-4 / 2.2e-3 / 1.3e-2 |
+| MegaLoc INT8 · GPU / CPU / ANE | 0.998532 / 0.997217 / 0.998497 | 2.1e-3 / 3.0e-3 / 2.2e-3 |
 
-iPhone vs Mac CoreML with the same model and compute unit: cos = 1.000000
-(max |Δ| 6e-5 on ANE, 7e-9 on CPU). The fp16 arithmetic, different kernels and
-accumulation order make bit-exactness impossible; a cosine of 0.99999 is
-far inside the noise of any retrieval threshold. In real use the **resize** is the
-larger source of divergence (vImage Lanczos in the app vs PIL bicubic on the PC), so
-if descriptors from both sides go into one database, use the same resampling filter.
+In real use the **resize** is the larger source of divergence (vImage Lanczos in the app vs
+PIL bicubic/Lanczos on the PC); descriptors that share a database should share a resampler.
 
 ## Build & run
 
 ```bash
 brew install xcodegen                     # once
 cd ios_demo
-./prepare_models.sh                       # compiles ../coreml_models/*.mlpackage → MixVPRDemo/Models/*.mlmodelc, generates the .xcodeproj
-open MixVPRDemo.xcodeproj                 # set your team, run on a device (the ANE path needs real hardware)
+./prepare_models.sh                       # compiles the .mlpackages → MixVPRDemo/Models/*.mlmodelc, generates the .xcodeproj
+open MixVPRDemo.xcodeproj                 # set your team, run on a device (ANE needs real hardware)
 ```
 
-Command-line alternative (device paired in Xcode, Developer Mode on):
+Model sources: MixVPR from `../coreml_models/` ([HuggingFace](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml)),
+MegaLoc from `../../megaloc/coreml_ios_322/` (produced by `megaloc/export_ios.py --size 322 --variants ane`).
+Missing MegaLoc packages are skipped; the app only lists models that are bundled.
+
+Command line (device paired in Xcode, Developer Mode on):
 
 ```bash
 xcodebuild -project MixVPRDemo.xcodeproj -scheme MixVPRDemo -configuration Release \
   -destination 'generic/platform=iOS' -derivedDataPath build -allowProvisioningUpdates build
 xcrun devicectl device install app --device <UDID> build/Build/Products/Release-iphoneos/MixVPRDemo.app
-# headless benchmark, results are printed as BENCH lines
-xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --bench
+xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --bench   # BENCH lines
+xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --embed   # EMBED lines
+xcrun devicectl device process launch --console --device <UDID> com.anureka.mixvprdemo --log     # LIVE lines
 ```
 
-The `.mlpackage` files come from the [HuggingFace release](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml)
-(`mixvpr/coreml/mixvpr_fp16.mlpackage`, `mixvpr_int8.mlpackage`); place them in `../coreml_models/`.
-
-## How it works
-
-Launch flags (`xcrun devicectl … launch … com.anureka.mixvprdemo <flag>`): `--bench` prints
-`BENCH` lines, `--log` prints per-second live timings with a 5-inference burst, `--embed`
-prints the descriptor of `test_image.png` (base64 float32) for cross-platform comparison.
+## Code map
 
 | File | Role |
 |------|------|
-| `MixVPREngine.swift` | Loads a `.mlmodelc` with the chosen `MLComputeUnits`, preprocesses a `CVPixelBuffer` into the fp16 `[1,3,320,320]` input, runs prediction, L2-normalises the 4096-d output. Also hosts the benchmark. |
+| `Models.swift` | `VPRModel` (family, precision, resource, input size), `ComputeChoice`; only bundled models are listed. |
+| `VPREngine.swift` | Loads a `.mlmodelc`, preprocesses a `CVPixelBuffer` (centre-crop → N² → ImageNet-normalised fp16 NCHW), runs prediction, L2-normalises. Cancellable benchmark. |
 | `CameraManager.swift` | `AVCaptureSession` (back camera, 640×480 BGRA, portrait) + SwiftUI preview layer. |
-| `VPRWorker.swift` | Serial worker queue: per-frame preprocess → infer → cosine scores against registered places; drops frames while busy. |
-| `AppState.swift` / `ContentView.swift` | UI: FPS / latency readout, model & compute pickers, place strip, register / clear / bench buttons. |
+| `Sessions.swift` | `Session → Place → PlaceImage` model and the plist store. |
+| `VPRWorker.swift` | Serial worker: per-frame preprocess → infer → per-view cosine → per-place max; session CRUD; re-indexing; benchmark with stop. |
+| `AppState.swift` | `@MainActor` view state, persisted preferences, capture/rename/benchmark actions. |
+| `ContentView.swift` / `Viewfinder.swift` / `Shelf.swift` / `SessionsSheet.swift` / `SettingsSheet.swift` | UI. |
 
-Match thresholds shown in the UI: ≥ 0.70 confident (green), 0.55–0.70 maybe (yellow), otherwise unknown.
-The model's input normalisation is **not** baked into the CoreML package, so any other client must
-apply `(x/255 − mean)/std` with ImageNet statistics in RGB order and resize to exactly 320×320.
+Both models expect ImageNet-normalised RGB at exactly their input size; normalisation is **not** baked
+into the CoreML packages.
