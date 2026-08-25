@@ -29,14 +29,29 @@ import onnx
 # Model
 # ---------------------------------------------------------------------------
 
-class MixVPRFull(nn.Module):
-    """ResNet50 (layer4 cropped) + MixVPR aggregator."""
+# The trained MixVPR weights. Every export that skips this ships an
+# ImageNet backbone with a RANDOM aggregator head — which is exactly what
+# happened to the first HF release: all "CosSim 1.0000 vs PyTorch" checks
+# passed because the reference was the same unloaded model. (Caught
+# 2026-08-09: the broken ONNX scored 0.48 cosine on a 90%-crop of the
+# *same image*; the loaded model scores ~0.77.)
+CKPT_PATH = os.environ.get(
+    'MIXVPR_CKPT', './LOGS/resnet50_MixVPR_4096_channels(1024)_rows(4).ckpt')
 
-    def __init__(self):
+
+class MixVPRFull(nn.Module):
+    """ResNet50 (layer4 cropped) + MixVPR aggregator, with trained weights.
+
+    Loading happens in __init__ on purpose: a constructor nobody can call
+    without getting the real weights is the fix that survives the next
+    refactor. Set MIXVPR_CKPT to override the checkpoint path.
+    """
+
+    def __init__(self, ckpt_path=None):
         super().__init__()
         from models.helper import get_backbone, get_aggregator
         self.backbone = get_backbone(
-            backbone_arch='resnet50', pretrained=True,
+            backbone_arch='resnet50', pretrained=False,
             layers_to_freeze=0, layers_to_crop=[4],
         )
         self.aggregator = get_aggregator(
@@ -47,6 +62,21 @@ class MixVPRFull(nn.Module):
                 'mlp_ratio': 1, 'out_rows': 4,
             },
         )
+        ckpt_path = ckpt_path or CKPT_PATH
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(
+                f"MixVPR checkpoint not found: {ckpt_path} — refusing to "
+                f"export untrained weights. Download it (README 'Weights' "
+                f"table, 4096-dim row) or set MIXVPR_CKPT.")
+        state = torch.load(ckpt_path, map_location='cpu')
+        state = state.get('state_dict', state)
+        missing, unexpected = self.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                f"Checkpoint does not match the model: "
+                f"missing={missing[:3]}({len(missing)}) "
+                f"unexpected={unexpected[:3]}({len(unexpected)})")
+        print(f"[CKPT]   Loaded {ckpt_path} (strict: 0 missing / 0 unexpected)")
 
     def forward(self, x):
         return self.aggregator(self.backbone(x))

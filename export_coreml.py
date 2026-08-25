@@ -29,15 +29,36 @@ from coremltools.optimize.coreml import (
 # Model
 # ---------------------------------------------------------------------------
 
+# Same fix as export_quant_onnx.py: the first HF release exported an
+# ImageNet backbone + random aggregator because nothing loaded this file.
+# Loading lives in __init__ so no export path can skip it.
+CKPT_PATH = os.environ.get(
+    'MIXVPR_CKPT', './LOGS/resnet50_MixVPR_4096_channels(1024)_rows(4).ckpt')
+
+
 class MixVPRFull(nn.Module):
-    def __init__(self):
+    def __init__(self, ckpt_path=None):
         super().__init__()
         from models.helper import get_backbone, get_aggregator
-        self.backbone = get_backbone('resnet50', True, 0, [4])
+        self.backbone = get_backbone('resnet50', False, 0, [4])
         self.aggregator = get_aggregator('MixVPR', {
             'in_channels': 1024, 'in_h': 20, 'in_w': 20,
             'out_channels': 1024, 'mix_depth': 4, 'mlp_ratio': 1, 'out_rows': 4,
         })
+        ckpt_path = ckpt_path or CKPT_PATH
+        if not os.path.exists(ckpt_path):
+            raise FileNotFoundError(
+                f"MixVPR checkpoint not found: {ckpt_path} — refusing to "
+                f"export untrained weights. Set MIXVPR_CKPT to override.")
+        state = torch.load(ckpt_path, map_location='cpu')
+        state = state.get('state_dict', state)
+        missing, unexpected = self.load_state_dict(state, strict=False)
+        if missing or unexpected:
+            raise RuntimeError(
+                f"Checkpoint does not match the model: "
+                f"missing={missing[:3]}({len(missing)}) "
+                f"unexpected={unexpected[:3]}({len(unexpected)})")
+        print(f"[CKPT]   Loaded {ckpt_path} (strict: 0 missing / 0 unexpected)")
 
     def forward(self, x):
         return self.aggregator(self.backbone(x))

@@ -140,12 +140,21 @@ huggingface-cli download Realcat/image_retrieval_checkpoints mixvpr/coreml/ --lo
 
 | Format | Model | Size | Latency (M-series) | CosSim | Download |
 |---|---|---|---|---|---|
-| ONNX FP32 | `mixvpr/onnx/mixvpr_fp32.onnx` | 41.7 MB | 32.4 ms | 1.0000 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp32.onnx) |
-| ONNX FP16 | `mixvpr/onnx/mixvpr_fp16.onnx` | 21.0 MB | 38.2 ms | 0.9999 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp16.onnx) |
-| CoreML FP16 | `mixvpr/coreml/mixvpr_fp16.mlpackage/` | 20.8 MB | **3.1 ms** | 0.9999 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_fp16.mlpackage) |
-| CoreML INT8 | `mixvpr/coreml/mixvpr_int8.mlpackage/` | 10.5 MB | **3.3 ms** | 0.9983 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_int8.mlpackage) |
+| ONNX FP32 | `mixvpr/onnx/mixvpr_fp32.onnx` | 41.7 MB | 30.9 ms | 1.0000 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp32.onnx) |
+| ONNX FP16 | `mixvpr/onnx/mixvpr_fp16.onnx` | 21.0 MB | 37.8 ms | 0.9999 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/resolve/main/mixvpr/onnx/mixvpr_fp16.onnx) |
+| CoreML FP16 | `mixvpr/coreml/mixvpr_fp16.mlpackage/` | 20.8 MB | **2.9 ms** | 0.9998 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_fp16.mlpackage) |
+| CoreML INT8 | `mixvpr/coreml/mixvpr_int8.mlpackage/` | 10.5 MB | **3.1 ms** | 0.9985 | [⬇](https://huggingface.co/Realcat/image_retrieval_checkpoints/tree/main/mixvpr/coreml/mixvpr_int8.mlpackage) |
 
-> **Note:** Images must be resized to 320×320. The model produces a 4096-dim L2-normalized global descriptor.
+> **Note:** Images must be resized to 320×320. The model produces a 4096-dim global descriptor (L2-normalize it before cosine comparison).
+
+> **⚠️ 2026-08-09 — models re-exported.** Every artifact uploaded before this
+> date was exported **without loading the trained checkpoint** (ImageNet
+> backbone + randomly initialized aggregator): the export scripts never called
+> `load_state_dict`, and the "CosSim vs PyTorch" checks compared against the
+> same unloaded model, so they all passed. Symptom of the broken files: a 90%
+> crop of the *same image* scores ~0.48 cosine (healthy weights: ~0.77);
+> indoor relocalization recall@2m measured 59.5% vs 94.8% after the fix.
+> Re-download if you fetched `mixvpr/*` before 2026-08-09.
 
 ### Setup
 
@@ -209,14 +218,29 @@ uv run python export_quant_onnx.py
 uv run python export_coreml.py
 ```
 
+Both scripts **require the trained checkpoint** at
+`./LOGS/resnet50_MixVPR_4096_channels(1024)_rows(4).ckpt` (override with
+`MIXVPR_CKPT=...`) and refuse to run without it — the checkpoint is loaded
+inside the model constructor with a strict key check, so an export can no
+longer silently ship untrained weights.
+
 Calibration images are read from `/Volumes/SSD-Realcat/datasets/raco` (roxford5k + rparis6k + revisitop1m). Update the `calib_base` variable in the scripts to point to your own dataset.
 
 ### Accuracy Notes
 
-- **ONNX FP16**: CosSim > 0.9999 — retrieval results identical to PyTorch.
-- **CoreML FP16**: CosSim > 0.9999 — latency ~3 ms (ANE ~15× speedup).
-- **CoreML INT8**: CosSim 0.9983 — latency ~3 ms, only 10.5 MB. Negligible retrieval impact.
+Measured 2026-08-09 against the checkpoint-loaded PyTorch model:
+
+- **ONNX FP32**: CosSim 1.0000 — bit-faithful export.
+- **ONNX FP16**: CosSim 0.9999+ — retrieval results identical to PyTorch.
+- **CoreML FP16**: CosSim 0.9998 — latency ~2.9 ms (ANE ~12× speedup).
+- **CoreML INT8**: CosSim 0.9985 — latency ~3.1 ms, only 10.5 MB. Negligible retrieval impact.
+- **CoreML 4-bit**: CosSim ~0.60 — unusable (consistent with sub-8-bit failures on other VPR models); not published.
 - **ONNX INT8/INT4**: Quantized models are generated but the ONNX Runtime CPU EP lacks `ConvInteger` kernels for this architecture. Use GPU EP (CUDA/TensorRT) or switch to CoreML for quantized inference.
+
+**Integrity probe** (catches an unloaded-weights export in seconds, no dataset
+needed): embed any image and a 90% crop of it — trained MixVPR scores
+**~0.75–0.85 cosine**; an untrained export scores ~0.5. Run it after every
+re-export before uploading.
 
 ## Bibtex
 
