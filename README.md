@@ -242,6 +242,22 @@ needed): embed any image and a 90% crop of it — trained MixVPR scores
 **~0.75–0.85 cosine**; an untrained export scores ~0.5. Run it after every
 re-export before uploading.
 
+### Mobile (iOS) demo
+
+MixVPR runs comfortably in real time on a phone. `ios_demo/` contains a SwiftUI app
+(live camera → descriptor → place matching) with a built-in benchmark; see
+[`ios_demo/README.md`](ios_demo/README.md) for build steps.
+
+Measured on **iPhone 15 Pro Max (A17 Pro, iOS 26.5)**, inference only, median of 50 runs:
+
+| Model | ANE | GPU | CPU |
+|-------|----:|----:|----:|
+| CoreML FP16 | **2.6 ms (~360 FPS)** | 14.4 ms (~69 FPS) | 10.9 ms (~93 FPS) |
+| CoreML INT8 | **2.4 ms (~400 FPS)** | 14.9 ms (~68 FPS) | 11.4 ms (~89 FPS) |
+
+Preprocessing adds ~0.2 ms, so the on-device pipeline is ~3 ms/frame on the Neural Engine —
+an order of magnitude below the 33 ms camera frame budget.
+
 ## Bibtex
 
 ```
